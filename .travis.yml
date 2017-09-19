@@ -1,0 +1,14 @@
+dist: trusty
+sudo: required
+language:
+  - cpp
+compiler:
+  - gcc
+before_install:
+  - sudo apt-get install -y libfftw3-dev
+  - tar -xvzf ./boost_mtl_minimal/boost_mtl_minimal.tar.gz
+  - cd ./src/driver_functions 
+script:
+  # Run your build commands next
+  - make -f MuddPILEdriver.make
+  
