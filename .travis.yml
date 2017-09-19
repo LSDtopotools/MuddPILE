@@ -6,7 +6,7 @@ compiler:
   - gcc
 before_install:
   - sudo apt-get install -y libfftw3-dev
-  - tar -xvzf ./boost_mtl_minimal/boost_mtl_minimal.tar.gz -C ./boost_mtl_minimal
+  - tar -xzf ./boost_mtl_minimal/boost_mtl_minimal.tar.gz -C ./boost_mtl_minimal
   - cd ./src/driver_functions 
 script:
   # Run your build commands next
