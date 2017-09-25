@@ -22,7 +22,7 @@ namespace :book do
   task :build_html => :prebuild do
     puts "Converting to HTML..."
     `bundle exec asciidoctor MuddPILE.asc -o MuddPILE.html`
-    puts " -- HTML output at MuddPILEhtml"
+    puts " -- HTML output at MuddPILE.html"
   end 
   
   desc 'build html with github stylesheet'
