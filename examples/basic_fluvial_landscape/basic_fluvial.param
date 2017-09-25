@@ -9,18 +9,25 @@ read extension: bil
 write extension: bil
 
 # ====================================
-# Now for parameters read from file.
-# If an expected parameter is not here check your spelling.
+# Set up the model domain
 NCols: 300
 NRows: 160
+DataResolution: 30
+
+# Some parameters for printing
+print_interval: 100
+write_hillshade: true
 
 # Some parameters for the spinup of the initial raster
 diamond_square_feature_order: 12
 diamond_square_relief: 20
 diamond_square_spinup: true
 
+# For this first example we don't want to force dissection
+force_dissect: false
+
 # And the parameters for the steady forcing
 rudimentary_steady_forcing: true
-rudimentary_steady_forcing_time: 2000
-rudimentary_steady_forcing_uplift: 0.001
+rudimentary_steady_forcing_time: 50000
+rudimentary_steady_forcing_uplift: 0.0002
 
