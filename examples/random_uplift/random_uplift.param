@@ -28,7 +28,7 @@ force_dissect: false
 
 # Calculate K to get a fixed relief
 set_fixed_relief: true
-fixed_relief: 30
+fixed_relief: 10
 
 # And the parameters for random uplift
 run_random_forcing: true

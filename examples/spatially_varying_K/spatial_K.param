@@ -26,16 +26,20 @@ diamond_square_spinup: true
 # For this first example we don't want to force dissection
 force_dissect: false
 
-# Calculate K to get a fixed relief
-set_fixed_relief: true
+# Run the spatially varying forcing
+spatially_varying_forcing: true
+spatially_varying_K: true
+calculate_K_from_relief: true
+min_U_for_spatial_var: 0.0002
 fixed_relief: 30
 
-# And the parameters for random uplift
-run_random_forcing: true
-maximum_time_for_random_cycle: 50000
-minimum_time_for_random_cycle: 20000
-maximum_U_for_random_cycle: 0.0004;
-minimum_U_for_random_cycle: 0.0001;
-random_dt: 250  
-random_cycles: 4
+spatial_K_factor: 3
+min_blob_size: 20
+max_blob_size: 50
+n_blobs: 10
+K_smoothing_steps: 10
 
+use_adaptive_timestep: true
+maximum_timestep: 500
+float_print_interval: 20000
+spatial_variation_time: 50000
