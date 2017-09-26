@@ -1,26 +1,40 @@
 # Here are the paramters ingested and set by the parameter parser
 # The file names and paths are: 
-read path: /LSDTopoTools/Git_projects/MuddPILE/examples/basic_fluvial
-read fname: basic_fluvial
-write path: /LSDTopoTools/Git_projects/MuddPILE/examples/basic_fluvial
-write fname: basic_fluvial
+read path: /LSDTopoTools/Git_projects/MuddPILE/examples/random_uplift
+read fname: random_uplift
+write path: /LSDTopoTools/Git_projects/MuddPILE/examples/random_uplift
+write fname: random_uplift
 CHeads file: NULL
 read extension: bil
 write extension: bil
 
 # ====================================
-# Now for parameters read from file.
-# If an expected parameter is not here check your spelling.
-NCols: 300
-NRows: 160
+# Set up the model domain
+NCols: 200
+NRows: 110
+DataResolution: 30
+
+# Some parameters for printing
+print_interval: 25
+write_hillshade: true
 
 # Some parameters for the spinup of the initial raster
 diamond_square_feature_order: 12
 diamond_square_relief: 20
 diamond_square_spinup: true
 
-# And the parameters for the steady forcing
-rudimentary_steady_forcing: true
-rudimentary_steady_forcing_time: 2000
-rudimentary_steady_forcing_uplift: 0.001
+# For this first example we don't want to force dissection
+force_dissect: false
 
+# Calculate K to get a fixed relief
+set_fixed_relief: true
+fixed_relief: 30
+
+# And the parameters for random uplift
+run_random_forcing: true
+maximum_time_for_random_cycle: 50000
+minimum_time_for_random_cycle: 20000
+maximum_U_for_random_cycle: 0.0004;
+minimum_U_for_random_cycle: 0.0001;
+random_dt: 250  
+random_cycles: 4

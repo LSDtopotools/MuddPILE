@@ -10,12 +10,12 @@ write extension: bil
 
 # ====================================
 # Set up the model domain
-NCols: 300
-NRows: 160
+NCols: 200
+NRows: 110
 DataResolution: 30
 
 # Some parameters for printing
-print_interval: 100
+print_interval: 150
 write_hillshade: true
 
 # Some parameters for the spinup of the initial raster
@@ -28,6 +28,8 @@ force_dissect: false
 
 # And the parameters for the steady forcing
 rudimentary_steady_forcing: true
-rudimentary_steady_forcing_time: 50000
-rudimentary_steady_forcing_uplift: 0.0002
+rudimentary_steady_forcing_time: 800000
+rudimentary_steady_forcing_uplift: 0.0004
+rudimentary_steady_forcing_K: 0.00005
+
 
