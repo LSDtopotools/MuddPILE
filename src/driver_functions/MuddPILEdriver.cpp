@@ -109,6 +109,16 @@ int main (int nNumberofArgs,char *argv[])
   int_default_map["print_interval"] = 10;
   bool_default_map["write_hillshade"] = true;
 
+  // control of m and n, and paramters for chi
+  float_default_map["A_0"] = 1;
+  float_default_map["m"] = 0.5;
+  float_default_map["n"] = 1;
+  int_default_map["uplift_mode"] = 0;
+  float_default_map["dt"] = 250;
+  float_default_map["D"] = 0.002;
+  float_default_map["S_c"] = 1.0;
+  float_default_map["background_K"] = 0.0005;
+
   // Parameters for the initial surface
   bool_default_map["use_diamond_square_initial"] = true;
   float_default_map["diamond_square_relief"] = 16;
@@ -143,16 +153,8 @@ int main (int nNumberofArgs,char *argv[])
   float_default_map["cycle_U_factor"] = 2;
   
   // The diamond square spinup routine
-  // THis generates the nicest initial surfaces. 
+  // This generates the nicest initial surfaces. 
   bool_default_map["diamond_square_spinup"] = false;
-
-  // control of m and n, and paramters for chi
-  float_default_map["A_0"] = 1;
-  float_default_map["m"] = 0.5;
-  float_default_map["n"] = 1;
-  int_default_map["uplift_mode"] = 0;
-  float_default_map["dt"] = 250;
-  int_default_map["print_interval"] = 10;
 
   // control of snapping to steady state
   bool_default_map["snap_to_steady"] = false;
@@ -261,6 +263,9 @@ int main (int nNumberofArgs,char *argv[])
   mod.set_print_hillshade(this_bool_map["write_hillshade"]);
   mod.set_timeStep( this_float_map["dt"] );
   mod.set_print_interval(this_int_map["print_interval"]);
+  mod.set_D( this_float_map["D"]);
+  mod.set_S_c( this_float_map["S_c"] );
+  mod.set_K( this_float_map["background_K"]);
   
   // print parameters to screen
   mod.print_parameters();
@@ -747,7 +752,7 @@ int main (int nNumberofArgs,char *argv[])
   //============================================================================
   if(this_bool_map["rudimentary_steady_forcing"])
   {
-    
+    cout << "I am going to run some very basic steady forcing." << endl;
     cout << "Let me check the boundary conditions!" << endl;
     mod.print_boundary_conditions_to_screen();
     if( not this_bool_map["hillslopes_on"] )
@@ -755,19 +760,20 @@ int main (int nNumberofArgs,char *argv[])
       cout << "I'm turning hillslope diffusion off." << endl;
       mod.set_hillslope(false);
     }
+    else
+    {
+      cout << "This forcing includes hillslope diffusion." << endl;
+      mod.set_hillslope(true);
+    }
     cout << "Let me run some steady forcing for you. " << endl;
     cout << "Starting with a K of: " << this_float_map["rudimentary_steady_forcing_K"] << endl;
     current_end_time = current_end_time+this_float_map["rudimentary_steady_forcing_time"];
+    mod.set_timeStep( this_float_map["dt"] );
     mod.set_endTime(current_end_time);
     mod.set_K(this_float_map["rudimentary_steady_forcing_K"]);
     mod.set_uplift( this_int_map["uplift_mode"], this_float_map["rudimentary_steady_forcing_uplift"] );
     mod.run_components_combined();
-    
-    cout << "This is a test, I am changing the uplift." << endl;
-    current_end_time = current_end_time+this_float_map["rudimentary_steady_forcing_time"];
-    mod.set_endTime(current_end_time);
-    mod.set_baseline_uplift(this_float_map["rudimentary_steady_forcing_uplift"]*2);
-    mod.run_components_combined();
+
   }
 
 
@@ -787,7 +793,12 @@ int main (int nNumberofArgs,char *argv[])
       cout << "I'm turning hillslope diffusion off." << endl;
       mod.set_hillslope(false);
     }
-
+    else
+    {
+      cout << "This forcing includes hillslope diffusion." << endl;
+      mod.set_hillslope(true);
+    }
+    
     // get the K value for the desired relief
     float first_cycle_K;
     if(this_bool_map["set_fixed_relief"])
@@ -889,15 +900,30 @@ int main (int nNumberofArgs,char *argv[])
       cout << "I'm turning hillslope diffusion off." << endl;
       mod.set_hillslope(false);
     }
+    else
+    {
+      cout << "This forcing includes hillslope diffusion." << endl;
+      mod.set_hillslope(true);
+    }
+    
 
-    // get the K value for the desired relief
-    float first_cycle_K;
-    cout << "I am calculating a K value that will get a relief of " << this_float_map["fixed_relief"] << " metres" << endl;
-    cout << " for an uplift rate of " << this_float_map["minimum_U_for_random"]*1000 << " mm/yr" << endl; 
-    first_cycle_K = mod.fluvial_calculate_K_for_steady_state_relief(this_float_map["minimum_U_for_random"],this_float_map["fixed_relief"]);
-    cout << "The K value is: " << first_cycle_K << endl;
-    mod.set_K(first_cycle_K);
-    mod.raise_and_fill_raster(); 
+
+
+    if(this_bool_map["set_fixed_relief"])
+    {
+      // get the K value for the desired relief
+      float first_cycle_K;
+      cout << "I am calculating a K value that will get a relief of " << this_float_map["fixed_relief"] << " metres" << endl;
+      cout << " for an uplift rate of " << this_float_map["minimum_U_for_random"]*1000 << " mm/yr" << endl; 
+      first_cycle_K = mod.fluvial_calculate_K_for_steady_state_relief(this_float_map["minimum_U_for_random"],this_float_map["fixed_relief"]);
+      cout << "The K value is: " << first_cycle_K << endl;
+      mod.set_K(first_cycle_K);
+    }
+    else
+    {
+      cout << "I am using the background K value." << endl;
+      mod.set_K(this_float_map["background_K"]);
+    }
 
     // now for the model run
     mod.set_print_interval(this_int_map["print_interval"]);
@@ -994,9 +1020,9 @@ int main (int nNumberofArgs,char *argv[])
         {
           case 0:
             {
-              cout << "K variation case 0." << endl;
+              cout << "K variation case 0. Min K: " << this_min_K<<  " and max K: " << this_max_K << endl;
               LSDRasterMaker KRaster1(this_int_map["NRows"],this_int_map["NCols"]);
-              KRaster1.resize_and_reset(this_int_map["NRows"],this_int_map["NCols"],this_float_map["DataResolution"],this_float_map["spatially_varying_min_K"]);
+              KRaster1.resize_and_reset(this_int_map["NRows"],this_int_map["NCols"],this_float_map["DataResolution"],this_min_K);
               KRaster1.random_square_blobs(this_int_map["min_blob_size"], this_int_map["max_blob_size"], 
                                     this_min_K, this_max_K,
                                     this_int_map["n_blobs"]);
@@ -1024,8 +1050,9 @@ int main (int nNumberofArgs,char *argv[])
               cout << "  0 == random squares" << endl;
               cout << "  1 == sine waves (I lied, at the moment this doesn't work--SMM Sept 2017)." << endl;
               cout << "You didn't choose a valid option so I am defaulting to random squares." << endl;
+              cout << "K variation: Min K: " << this_min_K<<  " and max K: " << this_max_K << endl;
               LSDRasterMaker KRaster1(this_int_map["NRows"],this_int_map["NCols"]);
-              KRaster1.resize_and_reset(this_int_map["NRows"],this_int_map["NCols"],this_float_map["DataResolution"],this_float_map["spatially_varying_min_K"]);
+              KRaster1.resize_and_reset(this_int_map["NRows"],this_int_map["NCols"],this_float_map["DataResolution"],this_min_K);
               KRaster1.random_square_blobs(this_int_map["min_blob_size"], this_int_map["max_blob_size"], 
                                     this_min_K, this_max_K,
                                     this_int_map["n_blobs"]);
@@ -1165,7 +1192,12 @@ int main (int nNumberofArgs,char *argv[])
       cout << "I'm turning hillslope diffusion off." << endl;
       mod.set_hillslope(false);
     }
-
+    else
+    {
+      cout << "This forcing includes hillslope diffusion." << endl;
+      mod.set_hillslope(true);
+    }
+    
     bool use_adaptive_timestep =   this_bool_map["use_adaptive_timestep"];
     
     if (use_adaptive_timestep)
@@ -1220,13 +1252,5 @@ int main (int nNumberofArgs,char *argv[])
     mod.set_endTime(current_end_time);
     mod.run_components_combined(this_U_raster, this_K_raster,use_adaptive_timestep);
   }
-  
-  
-  
-  
-  
-  
-  
-  
   
 }
