@@ -2115,7 +2115,7 @@ void LSDRasterSpectral::find_rollover_frequency(float& rollover_frequency, float
   float beta_max = 0;
   float r2_max = 0;
   float rollover_freq = 0;
-  float rollover_freq_r2 = 0;
+  //float rollover_freq_r2 = 0;
   int NBins = bin_mean_PSD.size();
   vector<float> log_bin_mean_PSD,log_bin_mean_freq;
   vector<int> bin_index;
@@ -2162,7 +2162,7 @@ void LSDRasterSpectral::find_rollover_frequency(float& rollover_frequency, float
     if(R_sq_i > r2_max)
     {
       r2_max = R_sq_i;
-      rollover_freq_r2 = bin_mean_freq[bin_index[i]];
+      //rollover_freq_r2 = bin_mean_freq[bin_index[i]];
       rollover_index_r2 = i;
     }
   }
@@ -2221,6 +2221,7 @@ void LSDRasterSpectral::find_rollover_frequency(float& rollover_frequency, float
 // calculate_background_spectrum
 void LSDRasterSpectral::calculate_background_spectrum(float rollover_frequency, float beta, float log_bin_width, int N_iterations, int window_option)
 {
+  cout << "LINE 2224. I am going to calculate rollover frequency, so I am ignoring the one you gave to me." << endl;
   int N = RadialPSD.size();
   vector<float> background_PSD(N,0.0);
   vector<float> normalised_PSD(N,0.0);
@@ -2251,10 +2252,12 @@ void LSDRasterSpectral::calculate_background_spectrum(float rollover_frequency, 
   Array2D<float> fractal_raster_window(NRows,NCols,0.0);
   Array2D<float> trend_plane(NRows,NCols,0.0);
   Array2D<float> window(NRows,NCols,0.0);     
-  float mean_fractal,variance_fractal,mean_topo,variance_topo,mean_dt,variance_dt;
+  float mean_fractal,variance_fractal,mean_dt,variance_dt;
+  //float variance_topo;
+  //float mean_topo;
   int transform_direction;
-  mean_topo = get_mean_ignore_ndv(RasterData, NoDataValue);
-  variance_topo = get_variance_ignore_ndv(RasterData, NoDataValue, mean_topo);
+  //mean_topo = get_mean_ignore_ndv(RasterData, NoDataValue);
+  //variance_topo = get_variance_ignore_ndv(RasterData, NoDataValue, mean_topo);
   detrend2D(RasterData, raster_dt, trend_plane);
   mean_dt = get_mean_ignore_ndv(raster_dt, NoDataValue);
   variance_dt = get_variance_ignore_ndv(raster_dt, NoDataValue, mean_dt);
@@ -2493,8 +2496,8 @@ void LSDRasterSpectral::full_spectral_analysis(float log_bin_width, int N_iterat
   // CALCULATE BACKGROUND FREQUENCY AND NORMALISED SPECTRUM
   cout << "\t calculate background frequency..."  << endl;
   // Initiate output vectors
-  float rollover_beta;
-  float rollover_frequency;
+  float rollover_beta = 0.1;      // This isn't used. Now the code finds a rollover beta. 
+  float rollover_frequency = 0.1;     // This isn't used. Now the code finds a rollover frequency. 
   calculate_background_spectrum(rollover_frequency, rollover_beta, log_bin_width, N_iterations,window_option);
   
 }

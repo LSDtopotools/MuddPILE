@@ -46,6 +46,7 @@
 #include "LSDRaster.hpp"
 #include "LSDRasterSpectral.hpp"
 #include "LSDJunctionNetwork.hpp"
+#include "LSDSpatialCSVReader.hpp"
 #include "LSDParticleColumn.hpp"
 #include "LSDCRNParameters.hpp"
 using namespace std;
@@ -101,10 +102,10 @@ class LSDRasterModel: public LSDRasterSpectral
   /// @param data An Array2D of floats in the shape nrows*ncols,
   ///containing the data to be written.
   LSDRasterModel(int nrows, int ncols, float xmin, float ymin,
-            float cellsize, float ndv, Array2D<float> data)
+            float cellsize, float ndv, Array2D<float> data, map<string,string> GRS)
   {
     default_parameters();
-    create(nrows, ncols, xmin, ymin, cellsize, ndv, data);
+    create(nrows, ncols, xmin, ymin, cellsize, ndv, data, GRS);
   }
 
   /// @brief Constructor. Create an LSDRasterModel from an LSDRaster.
@@ -241,6 +242,23 @@ class LSDRasterModel: public LSDRasterSpectral
   /// @author SMM
   /// @date 25/08/2017
   void raise_and_fill_raster();
+  void raise_and_fill_raster(float min_slope_for_fill);
+
+  /// @brief create a normal fault horizontally across the raster.
+  /// @author FJC
+  /// @date 06/07/18
+  void normal_fault_part_of_raster(int throw_amt, int throw_type);
+
+  /// @brief simulate instantaneous base level fall
+  /// @author FJC
+  /// @date 18/07/18
+  void base_level_fall(int uplift_amt);
+
+  /// @brief This changes the elevation of a raster
+  /// @param elevation_adjust The change in elevation
+  /// @author SMM
+  /// @date 30/01/2020
+  void AdjustElevation(float elevation_change);
 
   /// @brief This initialises a surface with a hillslope
   /// that is the solution to the nonlinear sediment flux equation.
@@ -374,6 +392,20 @@ class LSDRasterModel: public LSDRasterSpectral
   /// @return the maximum elevation along the boundaty
   float find_max_boundary( int boundary_number );
 
+
+  /// @brief This fixes a channel, derived from source points data
+  ///  onto the model DEM
+  /// @param source_points_data an LSDSpatialCSVReader object. It needs lat and long and elevation columns
+  /// @author SMM
+  /// @date 04/03/2020
+  void impose_channels(LSDSpatialCSVReader& source_points_data);
+
+  /// @brief Takes a model step and gets an LSDSpatialCSVReader object for later use
+  /// @param contributing_pixels for the channel network
+  /// @return source_points_data an LSDSpatialCSVReader object. It needs lat and long and elevation columns
+  /// @author SMM
+  /// @date 04/03/2020
+  LSDSpatialCSVReader  get_channels_for_burning(int contributing_pixels);
 
 
   //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -587,7 +619,7 @@ class LSDRasterModel: public LSDRasterSpectral
 
   /// @brief This is a wrapper similar to run_components but sends the
   /// fluvial and uplfit fields to the nonlinear solver.
-  /// @detail Variable U and K rasters can be used. 
+  /// @detail Variable U and K rasters can be used.
   /// @param URaster A raster of uplift rates
   /// @param KRaster A raster of K values
   /// @param use_adaptive_timestep If true, an adaptive timestep is used
@@ -675,6 +707,63 @@ class LSDRasterModel: public LSDRasterSpectral
   /// @date 29/08/2017
   float fluvial_calculate_K_for_steady_state_relief(float U, float desired_relief);
 
+  /// @brief This smooths the model DEM and returns this smoothed surface as a raster
+  /// @param central_pixel_weighting A float that give the weighting of the central pixel. 
+  ///   The higher this number, the less smoothing. 2 is probably a good starting value. 
+  /// @author SMM
+  /// @date 16/12/2019
+  LSDRaster basic_smooth(float central_pixel_weighting);
+
+  /// @brief This checks for rivers (using a drainage area threshold) and then any remaining pixels
+  ///  are popped to a critical slope. Creates a river network with striaght slopes in between
+  /// @detail Very rudimentary: only uses slopes in the D8 direction so the slopes will 
+  ///  not be very accurate if the polyfit slope code is run. It should be considered a maximum relief
+  /// @param critical_slope the critical gradient for each D8 connection between pixels
+  /// @param contributing_pixel_threshold the threshold in pixles for a channel to form
+  /// @author BG, edited by SMM
+  /// @date 09/10/2019
+  LSDRaster basic_valley_fill_critical_slope(float critical_slope, int contributing_pixel_threshold);
+
+  /// @brief This checks for rivers (using a drainage area threshold) and then any remaining pixels
+  ///  are popped to a critical slope. Creates a river network with striaght slopes in between
+  /// @brief Very rudimentary: only uses slopes in the D8 direction so the slopes will 
+  ///  not be very accurate if the polyfit slope code is run. It should be considered a maximum relief
+  /// @param S_c_raster a raster with S_c values. Need to be same dimensions as the model raster
+  /// @param contributing_pixel_threshold the threshold in pixles for a channel to form
+  /// @author SMM
+  /// @date 10/10/2019
+  LSDRaster basic_valley_fill_critical_slope(LSDRaster& S_c_raster, int contributing_pixel_threshold);
+
+  /// @brief This method snaps to steady with spatially variable uplift and erodibility fields
+  ///  It also allows fixed base level. 
+  /// @param K_values a raster of erodiblity
+  /// @param U_values a raster of uplift
+  /// @param Source_points_data a spatialc csv reader with the appropriate file
+  /// @param carve_before_fill if true, run the carving algorithm before the filling algorithm
+  /// @author SMM
+  /// @date 01/10/2019
+  void fluvial_snap_to_steady_variable_K_variable_U(LSDRaster& K_values, LSDRaster& U_values, LSDSpatialCSVReader& Source_points_data, bool carve_before_fill);
+
+  /// @brief This method snaps to steady with spatially variable uplift and erodibility fields
+  ///  It also allows fixed base level. 
+  /// @detail In this version the base level is read from a csv file
+  /// @param K_values a raster of erodiblity
+  /// @param U_values a raster of uplift
+  /// @param csv_points_file the full path to a fiel with the elevation and node index data
+  /// @param carve_before_fill if true, run the carving algorithm before the filling algorithm
+  /// @author SMM
+  /// @date 03/10/2019
+  void fluvial_snap_to_steady_variable_K_variable_U(LSDRaster& K_values, LSDRaster& U_values, string csv_of_fixed_channel, bool carve_before_fill);
+
+  /// @brief This method instantaneously tilts the landscape by a certain angle.
+  /// @param angle the tilt angle in degrees
+  /// @param tilt_boundary. Tilt can be from the N, E, S, or W boundary. Must be"N", "E",
+  /// "S", or "W".
+  /// @return Doesn't return anlything but updates the raster elevations
+  /// @author FJC
+  /// @date 11/03/19
+  void instantaneous_tilt(float angle, string tilt_boundary);
+
 
   /// @brief Fastscape, implicit finite difference solver for stream power equations
   /// O(n)
@@ -700,7 +789,7 @@ class LSDRasterModel: public LSDRasterSpectral
   /// and solves the stream power equation at a future timestep in linear time
   /// This version includes the current uplift, so you do not need to call
   /// uplift after this has finished
-  /// @param K_raster the raster of K values. 
+  /// @param K_raster the raster of K values.
   /// @author SMM
   /// @date 01/09/2017
   void fluvial_incision_with_uplift_and_variable_K( LSDRaster& K_raster );
@@ -712,7 +801,7 @@ class LSDRasterModel: public LSDRasterSpectral
   /// and solves the stream power equation at a future timestep in linear time
   /// This version includes the current uplift, so you do not need to call
   /// uplift after this has finished
-  /// @param K_raster the raster of K values. 
+  /// @param K_raster the raster of K values.
   /// @param Uplift_rate a raster of uplift rates in m/yr
   /// @author SMM
   /// @date 01/09/2017
@@ -726,7 +815,7 @@ class LSDRasterModel: public LSDRasterSpectral
   /// and solves the stream power equation at a future timestep in linear time
   /// This version includes the current uplift, so you do not need to call
   /// uplift after this has finished. Uses an adaptive timestep.
-  /// @param K_raster the raster of K values. 
+  /// @param K_raster the raster of K values.
   /// @param Uplift_rate a raster of uplift rates in m/yr
   /// @author SMM
   /// @date 06/09/2017
@@ -825,7 +914,7 @@ class LSDRasterModel: public LSDRasterSpectral
   /// @date 07/07/2014   commented 26/06/2014
   float get_uplift_rate_at_cell(int i, int j);
 
-  /// @brief This checks to see if the uplift field is consistent with 
+  /// @brief This checks to see if the uplift field is consistent with
   ///  the raster dimensions. If not it corrects the dimensions of the uplift field
   /// @author SMM
   /// @date 23/08/2017
@@ -948,7 +1037,7 @@ class LSDRasterModel: public LSDRasterSpectral
 
   /// @brief set the time step
   void set_timeStep( float dt )        { timeStep = dt; }
-  
+
   /// @brief set the maximum time step
   void set_maxtimeStep (float max_dt)  { maxtimeStep = max_dt; }
 
@@ -983,7 +1072,7 @@ class LSDRasterModel: public LSDRasterSpectral
   void set_uplift_amplitude( double uplift_amplitude_fraction)
           { uplift_amplitude = max_uplift*uplift_amplitude_fraction; }
 
-  /// @brief this sets the baseline uplift rate for the tilt block                                  
+  /// @brief this sets the baseline uplift rate for the tilt block
   void set_baseline_uplift( float new_rate )    { baseline_uplift = new_rate; }
 
   /// @brief set the tolerance for determining steady state
@@ -1031,6 +1120,13 @@ class LSDRasterModel: public LSDRasterSpectral
 
   /// set the float print interval
   void set_next_printing_time ( float next_float_dt_print )    { next_printing_time = next_float_dt_print; }
+
+  /// @brief Update the raster data. WARNING this does not check the geometry of the raster
+  /// @param Raster Another raster. It needs to be the same dimensions as the original raster
+  /// @author SMM
+  /// @date 16/12/2019
+  void set_raster_data(LSDRaster& Raster);
+
 
 
   /// @brief this sets the K mode
@@ -1140,6 +1236,12 @@ class LSDRasterModel: public LSDRasterSpectral
   /// @date 09/08/2017
   void set_print_erosion( bool do_I_print_erosion )      { print_erosion = do_I_print_erosion; }
 
+  /// @brief Sets the End time mode
+  /// @param short 0,1,2,3,4
+  /// @author BG
+  /// @date 22/01/2019
+  void set_endTime_mode(short edm){endTime_mode = edm;}
+
 
 
   // -------------------------------------------------------------------
@@ -1192,16 +1294,16 @@ class LSDRasterModel: public LSDRasterSpectral
 
   /// @brief this gets the endTime
   float get_endTime( void)         { return endTime; }
-  
+
   /// @brief Gets the timestep
   float get_timeStep( void)        { return timeStep; }
-  
+
   /// @brief Gets the maximum timestep
   float get_maxtimeStep( void )    { return maxtimeStep; }
-  
+
   /// @brief this gets the current frame for printing
   int get_current_frame( void)     { return current_frame;}
-  
+
   /// @brief gets the uplift mode
   int get_uplift_mode(void)        { return uplift_mode; }
 
@@ -1400,6 +1502,12 @@ class LSDRasterModel: public LSDRasterSpectral
   /// @date 03/07/2014
   void MuddPILE_nl_soil_diffusion_nouplift();
 
+  // some getters
+  /// @return Number of rows as an integer.
+  int get_NRows() const        { return NRows; }
+  /// @return Number of columns as an integer.
+  int get_NCols() const        { return NCols; }
+
   //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
   //
   // Maps holding parameters and switches read from input paramter files
@@ -1474,7 +1582,7 @@ class LSDRasterModel: public LSDRasterSpectral
 
   /// Time in between each calculation
   float       timeStep;
-  
+
   /// The maximum possible timestep. Used with adaptive timestepping
   float maxtimeStep;
 
@@ -1643,7 +1751,7 @@ class LSDRasterModel: public LSDRasterSpectral
 
   /// interval over which output is written. Just based on number of timesteps
   int        print_interval;      // Interval at which output is written
-  
+
   /// this is for printing at fixed times
   float float_print_interval;
   float next_printing_time;
@@ -1708,7 +1816,7 @@ class LSDRasterModel: public LSDRasterSpectral
   void create(string master_param);
   void create(string filename, string extension);
   void create(int ncols, int nrows, float xmin, float ymin,
-        float cellsize, float ndv, Array2D<float> data);
+        float cellsize, float ndv, Array2D<float> data, map<string,string>);
   void create(LSDRaster& An_LSDRaster);
   void default_parameters( void );
 

@@ -110,6 +110,13 @@ Tools are included to:
 #include "LSDShapeTools.hpp"
 using namespace std;
 using namespace TNT;
+// Sorting compiling problems with MSVC
+#ifdef _WIN32
+#ifndef M_PI
+extern double M_PI;
+#endif
+#endif
+
 
 ///@brief Main analysis object to interface with other LSD objects.
 class LSDRaster
@@ -145,6 +152,21 @@ class LSDRaster
             float cellsize, float ndv, Array2D<float> data)
       { create(nrows, ncols, xmin, ymin, cellsize, ndv, data); }
 
+  /// @brief Create an LSDRaster from memory.
+  /// @return LSDRaster
+  /// @param nrows An integer of the number of rows.
+  /// @param ncols An integer of the number of columns.
+  /// @param xmin A float of the minimum X coordinate.
+  /// @param ymin A float of the minimum Y coordinate.
+  /// @param cellsize A float of the cellsize.
+  /// @param ndv An integer of the no data value.
+  /// @param data An Array2D of floats in the shape nrows*ncols,
+  ///containing the data to be written.
+  /// @param copy_data: if true, data is copied, if false, data is referenced.
+  LSDRaster(int nrows, int ncols, float xmin, float ymin,
+            float cellsize, float ndv, Array2D<float> data, bool copy_data)
+      { create(nrows, ncols, xmin, ymin, cellsize, ndv, data, copy_data); }
+
   /// @brief Create an LSDRaster from memory, with the elvation
   /// data stored as double precision floats.
   /// @return LSDRaster
@@ -170,9 +192,14 @@ class LSDRaster
       float cellsize, float ndv, Array2D<float> data, map<string,string> temp_GRS)
   { create(nrows, ncols, xmin, ymin, cellsize, ndv, data, temp_GRS); }
 
+  /// @brief Create an LSDRaster from an LSDIndexRaster object
+  /// @return LSDRaster
+  /// @param IntLSDRaster an LSDIndexRaster object
+  /// @author SMM
+  /// @date 30/07/19
+  LSDRaster(LSDIndexRaster& IntLSDRaster)   { create(IntLSDRaster); }
 
   // Get functions
-
   /// @return Number of rows as an integer.
   int get_NRows() const        { return NRows; }
   /// @return Number of columns as an integer.
@@ -187,6 +214,9 @@ class LSDRaster
   int get_NoDataValue() const      { return NoDataValue; }
   /// @return Raster values as a 2D Array.
   Array2D<float> get_RasterData() const { return RasterData.copy(); }
+
+  Array2D<float>* get_RasterDataPtr() { return &RasterData; }
+
 
   /// @brief Get the raw raster data, double format
   /// @author DAV
@@ -214,6 +244,13 @@ class LSDRaster
   /// @author SMM
   /// @date 19/05/16
   void set_data_element(int row, int column, float value)  { RasterData[row][column] = value; }
+
+  /// @brief Sets the raster global data.
+  /// @param 2Darray new array of data. Needs to be same dimensions than the other one.
+  /// @author BG
+  /// @date 16/04/19
+  void set_data_array(Array2D<float> ndata)  { RasterData = ndata.copy(); }
+
 
   /// Assignment operator.
   LSDRaster& operator=(const LSDRaster& LSDR);
@@ -462,6 +499,11 @@ class LSDRaster
   /// @author SMM
   /// @date 22/01/2016
   void get_row_and_col_of_a_point(float X_coordinate,float Y_coordinate,int& row, int& col);
+  void get_row_and_col_of_a_point(double X_coordinate,double Y_coordinate,int& row, int& col);
+
+
+  void snap_to_row_col_with_greatest_value_in_window(int input_row, int input_col, int&out_row, int& out_col, int n_pixels);
+
 
 
   /// @brief This function returns a vector with the X adn Y minimum and max
@@ -580,6 +622,10 @@ class LSDRaster
   /// @date 10/02/17
   LSDRaster BufferRasterData(float window_radius);
 
+  /// @brief Pad one smaller raster to the same extent as a bigger raster by adding
+  /// no data around the edges
+  LSDIndexRaster PadSmallerRaster(LSDIndexRaster& smaller_raster);
+
   //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
   //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
   //
@@ -661,6 +707,12 @@ class LSDRaster
   /// @date 27/10/2016
   LSDRaster MapAlgebra_subtract(LSDRaster& M_raster);
 
+
+  /// @brief This changes the elevation of a raster
+  /// @param elevation_adjust The change in elevation
+  /// @author SMM
+  /// @date 30/01/2020
+  void AdjustElevation(float elevation_change);
 
   // Functions for the Diamond Square algorithm
 
@@ -864,6 +916,39 @@ class LSDRaster
   /// @author DTM
   /// @date 28/03/2014
   vector<LSDRaster> calculate_polyfit_surface_metrics(float window_radius, vector<int> raster_selection);
+
+  /// @brief Surface polynomial fitting and extraction of topographic metrics.
+  ///  Same as above function but in this case one can opt for directional gradients.
+  ///  Added as another function to ensure legacy code is not broken.
+  /// @detail A six term polynomial surface is fitted to all the points that lie
+  /// within circular neighbourhood that is defined by the designated window
+  /// radius.  The user also inputs a binary raster, which tells the program
+  /// which rasters it wants to create (label as "1" to produce them, "0" to
+  /// ignore them. This has 8 elements, as listed below:
+  ///        0 -> Elevation (smoothed by surface fitting)
+  ///        1 -> Slope
+  ///        2 -> Aspect
+  ///        3 -> Curvature
+  ///        4 -> Planform Curvature
+  ///        5 -> Profile Curvature
+  ///        6 -> Tangential Curvature
+  ///        7 -> Stationary point classification (1=peak, 2=depression, 3=saddle)
+  ///        8 -> Directional gradients (dz/dx and dz,dy)
+  /// The program returns a vector of LSDRasters.  For options marked "false" in
+  /// boolean input raster, the returned LSDRaster houses a blank raster, as this
+  /// metric has not been calculated.  The desired LSDRaster can be retrieved from
+  /// the output vector by using the cell reference shown in the list above i.e. it
+  /// is the same as the reference in the input boolean vector.
+  /// @param window_radius -> the radius of the circular window over which to
+  /// fit the surface
+  /// @param raster_selection -> a binary raster, with 8 elements, which
+  /// identifies which metrics you want to calculate.
+  /// @return A vector of LSDRaster objects.  Those that you have not asked to
+  /// be calculated are returned as a 1x1 Raster housing a NoDataValue
+  ///
+  /// @author SMM
+  /// @date 22/06/2018
+  vector<LSDRaster> calculate_polyfit_surface_metrics_directional_gradients(float window_radius, vector<int> raster_selection);
 
   /// @brief Surface polynomial fitting and extraction of roughness metrics
   ///
@@ -1862,6 +1947,14 @@ class LSDRaster
   /// @date 16/10/13
   LSDRaster D_inf_units();
 
+  //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+  ///@brief Wrapper Function to create a D-infinity flow accumulation and drainage area raster
+  ///@return vector of LSDRaster (0 is acc, 1 is DA)
+  ///@author BG 
+  ///@date 09/01/2018
+  //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+  vector<LSDRaster> D_inf_flowacc_DA();
+
   ///@brief Wrapper Function to convert a D-infinity flow raster into spatial units.
   /// @return LSDRaster of D-inf flow areas in spatial units.
   /// @author MDH (after SWDG)
@@ -2302,6 +2395,28 @@ class LSDRaster
   /// @date 23/1/17
   vector< vector<float> > Sample_Along_Ridge(LSDRaster& Raster1, LSDRaster& Raster2, LSDRaster& Raster3, int a, int b, int threshold);
 
+  /// @brief function to convert feet to metres using US international feet,
+  /// where 1 foot = 0.3048006096012192 metres.
+  /// @return raster of elevations in metres
+  /// @author FJC
+  /// @date 16/10/17
+  LSDRaster convert_from_feet_to_metres();
+
+  /// @brief function to convert elevations from centimetres to metres
+  /// @return raster of elevations in metres
+  /// @author FJC
+  /// @date 18/10/17
+  LSDRaster convert_from_centimetres_to_metres();
+
+
+  /// @brief EXPERIMENTAL: Implementation of RichDEM breaching algorithm
+  /// @Brief originally from Lindsay et al., 2016 DOI: DOI:https://doi.org/10.1002/hyp.10648
+  /// @return LSDRaster carved
+  /// @author BG
+  /// @date 31/10/2018 (spooky!)
+  LSDRaster Breaching_Lindsay2016();
+
+
 protected:
 
   ///Number of rows.
@@ -2339,6 +2454,9 @@ protected:
               double cellsize, int ndv, Array2D<double> data);
   void create(int ncols, int nrows, float xmin, float ymin,
               float cellsize, float ndv, Array2D<float> data, map<string,string> GRS);
+  void create(LSDIndexRaster& IntLSDRaster);
+  void create(int nrows, int ncols, float xmin, float ymin,
+            float cellsize, float ndv, Array2D<float>& data, bool copy_data);
 
 };
 

@@ -87,7 +87,9 @@
 #include <list>
 #include <map>
 #include <string>
+#include <limits>
 #include <cstring>
+#include <queue>
 #include <algorithm>
 #include <math.h>
 #include "TNT/tnt.h"
@@ -731,6 +733,22 @@ void  LSDFlowInfo::get_lat_and_long_locations(double X, double Y, double& lat,
 
 
 
+void LSDFlowInfo::get_x_and_y_from_latlong(double lat, double longitude, double& X, double& Y )
+{
+  // initilise the converter
+  LSDCoordinateConverterLLandUTM Converter;
+
+  int UTM_zone;
+  bool is_North;
+  get_UTM_information(UTM_zone, is_North);
+
+
+  // loop through the samples collecting UTM information
+  int eId = 22;             // defines the ellipsiod. This is WGS
+  Converter.LLtoUTM_ForceZone(eId, lat, longitude,X, Y, UTM_zone);
+}
+
+
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 //
 // This function gets the UTM zone
@@ -838,6 +856,23 @@ void LSDFlowInfo::retrieve_receiver_information(int current_node,
   receiver_col = rc;
 }
 
+
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+// algorithms for searching the vectors
+// This gets the reciever of current_node, just its node version
+//
+// BG 05/01/2018
+//
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+void LSDFlowInfo::retrieve_receiver_information(int current_node,
+                     int& receiver_node)
+{
+  int rn;
+  rn = ReceiverVector[current_node];
+  receiver_node = rn;
+}
+
+
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 // algorithms for searching the vectors
@@ -856,6 +891,11 @@ void LSDFlowInfo::retrieve_current_row_and_col(int current_node,int& curr_row,
   curr_col = cc;
 }
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+
+int LSDFlowInfo::get_NodeIndex_from_row_col(int row, int col)
+{
+  return NodeIndex[row][col];
+}
 
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -887,7 +927,7 @@ void LSDFlowInfo::get_lat_and_long_from_current_node(int current_node, double& c
   double latitude;
   double longitude;
   get_lat_and_long_locations(cr, cc, latitude, longitude, Converter);
-  
+
   current_lat = latitude;
   current_long = longitude;
 }
@@ -971,7 +1011,7 @@ void LSDFlowInfo::print_vector_of_nodeindices_to_csv_file_with_latlong(vector<in
   sources_out.open(outfilename.c_str());
   sources_out.precision(9);
 
-  sources_out << "node,x,y,latitude,longitude" << endl;
+  sources_out << "id,x,y,latitude,longitude" << endl;
 
   // this is for latitude and longitude
   LSDCoordinateConverterLLandUTM Converter;
@@ -1112,6 +1152,220 @@ int LSDFlowInfo::retrieve_base_level_node(int node)
 
 
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+// This function removes all pixels that drain from edge nodes
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+LSDRaster LSDFlowInfo::remove_nodes_influneced_by_edge(LSDRaster& topography)
+{
+  int n_nodes = int(SVector.size());
+
+  int row,col;
+  int move_row,move_col;
+
+  vector<int> edge_node_list;
+
+  // get a list of nodes influenced by edge
+  for (int node = 0; node< n_nodes; node++)
+  {
+    retrieve_current_row_and_col(node,row,col);
+
+    // if the node is on an edge, it is an edge node
+    if (row == 0 || row == NRows-1 || col == 0 || col == NCols-1)
+    {
+      edge_node_list.push_back(node);
+    }
+    else
+    {
+      bool border_nodata = false;
+
+      // now got through 8 neighbours, looking for nodata
+      move_row = row+1;
+      move_col = col+1;
+      if (topography.get_data_element(move_row,move_col) == NoDataValue)
+      {
+        border_nodata = true;
+      }
+      move_row = row+1;
+      move_col = col;
+      if (topography.get_data_element(move_row,move_col) == NoDataValue)
+      {
+        border_nodata = true;
+      }
+      move_row = row+1;
+      move_col = col-1;
+      if (topography.get_data_element(move_row,move_col) == NoDataValue)
+      {
+        border_nodata = true;
+      }
+      move_row = row;
+      move_col = col+1;
+      if (topography.get_data_element(move_row,move_col) == NoDataValue)
+      {
+        border_nodata = true;
+      }
+      move_row = row;
+      move_col = col-1;
+      if (topography.get_data_element(move_row,move_col) == NoDataValue)
+      {
+        border_nodata = true;
+      }
+      move_row = row-1;
+      move_col = col+1;
+      if (topography.get_data_element(move_row,move_col) == NoDataValue)
+      {
+        border_nodata = true;
+      }
+      move_row = row-1;
+      move_col = col;
+      if (topography.get_data_element(move_row,move_col) == NoDataValue)
+      {
+        border_nodata = true;
+      }
+      move_row = row-1;
+      move_col = col-1;
+      if (topography.get_data_element(move_row,move_col) == NoDataValue)
+      {
+        border_nodata = true;
+      }
+
+
+      // if any of these pixels borders nodata then you add to the list
+      if (border_nodata)
+      {
+        edge_node_list.push_back(node);
+      }
+    }
+  }
+
+  // Okay, now we have an edge node list. We need to make a raster from this
+  LSDRaster new_topography = topography;
+
+  int n_nodata_nodes = int(edge_node_list.size());
+  int receiver_node, current_node;
+  //int receiver_row,receiver_col;
+  for (int node = 0; node< n_nodata_nodes; node++)
+  {
+
+    current_node = edge_node_list[node];
+    retrieve_receiver_information(current_node,receiver_node);
+    retrieve_current_row_and_col(current_node,row,col);
+    new_topography.set_data_element(row,col,NoDataValue);
+
+    // This does a trace downslope of the node, setting nodatavalues all the way down.
+    while (receiver_node != current_node)
+    {  // need to do edge checking
+
+      current_node = receiver_node;
+      retrieve_receiver_information(current_node,receiver_node);
+      retrieve_current_row_and_col(current_node,row,col);
+      new_topography.set_data_element(row,col,NoDataValue);
+
+    }
+
+  }
+
+  return new_topography;
+
+}
+
+
+LSDRaster LSDFlowInfo::find_nodes_not_influenced_by_edge_draining_to_nodelist(vector<int> node_list,LSDRaster& topography)
+{
+
+
+  int raster_NRows, raster_NCols;
+  float raster_XMin, raster_YMin, raster_DataRes, raster_NoDataValue;
+  int current_node, row,col;
+
+  // first check to make sure the raster dimensions match that of the
+  // raster upon which LSDFlowInfo is based
+  raster_NRows =  topography.get_NRows();
+  raster_NCols =  topography.get_NCols();
+  raster_XMin  =  topography.get_XMinimum();
+  raster_YMin  =  topography.get_YMinimum();
+  raster_NoDataValue = topography.get_NoDataValue();
+  raster_DataRes  =  topography.get_DataResolution();
+
+  if (raster_NRows != NRows || raster_NCols != NCols ||
+      raster_XMin != XMinimum || raster_YMin != YMinimum ||
+      raster_DataRes != DataResolution)
+  {
+    cout << "Warning!!, LSDFlowInfo::find_nodes_not_influenced_by_edge_draining_to_nodelist\n"
+      << "Accumulation raster does not match dimensions of original raster\n"
+      << "The resampling need to be done before that step! I will now crash... \n"
+      << "I have heard that lsdtopytools does that for you automatically now!" << endl;
+    exit(EXIT_FAILURE);
+  }
+
+  // create the data array
+  Array2D<float> new_topography_data(NRows,NCols,raster_NoDataValue);
+
+
+  // The node list is loaded from another function. This can be a channel network or a
+  // main stream channel. That channel can be generated using the LSDFlowInfo method LSDFlowInfo::get_flow_path
+  int n_nodes = int(node_list.size());
+  cout << "I am trying to isolate nodes draining to a fixed channel that are not influenced by nodata." << endl;
+  cout << "I am programmed in a rather rudimentary, brute force way. It may take some time. " << endl;
+  cout << "I need to process " << n_nodes << " nodes." << endl;
+  for(int node = 0; node < n_nodes; node++)
+  {
+    if (node % 500 == 0)
+    {
+      cout << "Node " << node << " of " << n_nodes << endl;
+    }
+
+    // first get the current node
+    retrieve_current_row_and_col(node_list[node],row,col);
+    new_topography_data[row][col] = topography.get_data_element(row,col);
+
+    // now get the donors
+    vector<int> donors = retrieve_donors_to_node(  node_list[node]);
+
+    // Loop through all the donors to this particular node. We will look through the donors to
+    // find upslope influence of nodata.
+    int n_donors = int(donors.size());
+    for (int donor = 0; donor<n_donors; donor++)
+    {
+      int this_d_node = donors[donor];
+
+      // check to see if the donor is in the fixed channel. If it is, get rid of it.
+      bool donor_in_node_list = false;
+      for (int nl = 0; nl<n_nodes; nl++)
+      {
+        if (node_list[nl] == this_d_node)
+        {
+          donor_in_node_list = true;
+        }
+      }
+
+      if (donor_in_node_list == false)
+      {
+        bool is_influenced = is_upstream_influenced_by_nodata(this_d_node, topography);
+
+        // If this donor is not influenced by nodata anywhere upstream, add all the pixels
+        // draining to this node to the data.
+        if (is_influenced == false)
+        {
+          vector<int> influenced_nodes = get_upslope_nodes_include_outlet(this_d_node);
+          int n_in_basin = int(influenced_nodes.size());
+          for (int in = 0; in < n_in_basin; in++)
+          {
+            current_node = influenced_nodes[in];
+            retrieve_current_row_and_col(current_node,row,col);
+            new_topography_data[row][col] = topography.get_data_element(row,col);
+          }
+        }
+      }
+
+    }
+  }
+
+  LSDRaster temp_topo(NRows,NCols,XMinimum,YMinimum,DataResolution,NoDataValue,new_topography_data,GeoReferencingStrings);
+  return temp_topo;
+
+}
+
+
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 // Get the node for a cell at a given row and column
 //@author DTM
 //@date 08/11/2013
@@ -1154,6 +1408,17 @@ float LSDFlowInfo::get_DrainageArea_square_km(int this_node)
   float DrainageAreaKm = DrainageArea/1000000;
 
   return DrainageAreaKm;
+}
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+// get the drainage area of a node in m^2
+// FJC 01/05/18
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+float LSDFlowInfo::get_DrainageArea_square_m(int this_node)
+{
+  int NContributingPixels = NContributingNodes[this_node];
+  float DrainageArea = NContributingPixels*DataResolution*DataResolution;
+
+  return DrainageArea;
 }
 
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -1533,7 +1798,7 @@ map<string, vector<string> > LSDFlowInfo::load_csv_data(string filename)
          << "doesn't exist; check your filename" << endl;
     exit(EXIT_FAILURE);
   }
-  
+
   // Initiate the data map
   map<string, vector<string> > data_map;
 
@@ -1625,7 +1890,7 @@ map<string, vector<string> > LSDFlowInfo::load_csv_data(string filename)
     }
 
   }
-  
+
 
 
   data_map = temp_data_map;
@@ -1635,7 +1900,7 @@ map<string, vector<string> > LSDFlowInfo::load_csv_data(string filename)
 //  {
 //    cout << "Key is: " <<it->first << "\n";
 //  }
-  
+
   return data_map;
 
 }
@@ -1718,7 +1983,7 @@ vector<int> LSDFlowInfo::data_column_to_int(string column_name, map<string, vect
 // resolution, which was impossible before.
 // DTM
 //
-// Update 31/03/2017 Now reads the file using csv reader so that columns appear in any order. 
+// Update 31/03/2017 Now reads the file using csv reader so that columns appear in any order.
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 vector<int> LSDFlowInfo::Ingest_Channel_Heads(string filename, string extension, int input_switch)
 {
@@ -1735,10 +2000,10 @@ vector<int> LSDFlowInfo::Ingest_Channel_Heads(string filename, string extension,
       cout << "\t Note, you have specified an unsupported value for the input switch.  Note: \n\t\t 0=take node index\n\t\t 1=take row and column indices\n\t\t 2=take x and y coordinates"  << endl;
       cout << "\t ...taking node index by default" << endl;
     }
-    
+
       // load the csv file
     data_map = load_csv_data(filename+".csv");
-    
+
     vector<int> nodeindex,rowindex,colindex;
     vector<float> x_coord,y_coord;
 
@@ -1828,6 +2093,53 @@ vector<int> LSDFlowInfo::Ingest_Channel_Heads(string filename, string extension,
 }
 
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+// Minimalistic method to ingest the channel heads from vectors of x y coordinates
+// Using xy allows a "universal" method that can ingest external or internal data
+// B.G. 11/11/2018
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+vector<int> LSDFlowInfo::Ingest_Channel_Heads(vector<float>& x_coord, vector<float>& y_coord)
+{
+
+  vector<int> Sources, TempSources;
+  int node;
+  vector<int> Sources_temp;
+  int N_coords = x_coord.size();
+  int N_sources_1 = 0;
+  for(int i = 0; i < N_coords; ++i)
+  {
+    node = get_node_index_of_coordinate_point(x_coord[i], y_coord[i]);
+    if (node != NoDataValue)
+    {
+      // Test 1 - Check for channel heads that fall in same pixel
+      int test1 = 0;
+      N_sources_1 = Sources_temp.size();
+      for(int i_test=0; i_test<N_sources_1;++i_test)
+      {
+        if(node==Sources_temp[i_test]) test1 = 1;
+      }
+      if(test1==0) Sources_temp.push_back(node);
+      //else cout << "\t\t ! removed node from sources list - coincident with another source node" << endl;
+    }
+  }
+  // Test 2 - Need to do some extra checks to load sources correctly.
+  int N_sources_2 = Sources_temp.size();
+  for(int i = 0; i<N_sources_2; ++i)
+  {
+    int test2 = 0;
+    for(int i_test = 0; i_test<int(Sources_temp.size()); ++i_test)
+    {
+      if(i!=i_test)
+      {
+        if(is_node_upstream(Sources_temp[i],Sources_temp[i_test])==true) test2 = 1;
+      }
+    }
+    if(test2 ==0) Sources.push_back(Sources_temp[i]);
+    //else cout << "\t\t ! removed node from sources list - other sources upstream" << endl;
+  }
+  return Sources;
+}
+
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 // Method to ingest the channel heads raster generated using channel_heads_driver.cpp
 // into a vector of source nodes so that an LSDJunctionNetwork can be created easily
 // from them. Assumes the FlowInfo object has the same dimensions as the channel
@@ -1870,10 +2182,11 @@ vector<int> LSDFlowInfo::Ingest_Channel_Heads(string filename, string extension,
 vector<int> LSDFlowInfo::Ingest_Channel_Heads(string filename, int input_switch)
 {
   vector<int> Sources;
-  int CH_node;
+  //int CH_node;
 
   // load the csv file
   map<string, vector<string> > data_map = load_csv_data(filename+".csv");
+
 
   // now check the input switch to search for the various columns
   if (input_switch == 0)
@@ -1963,7 +2276,7 @@ vector<int> LSDFlowInfo::Ingest_Channel_Heads_OS(string csv_filename)
 
   input_csv.open(fname.c_str());
   // check for correct input
-  if (not input_csv.good())
+  if (input_csv.good() == false)
   {
     cout << "I can't read the CSV file! Check your filename." << endl;
   }
@@ -2360,7 +2673,7 @@ LSDRaster LSDFlowInfo::write_DrainageArea_to_LSDRaster()
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 //
-// This function calcualtes the contributing pixels
+// This function calculates the contributing pixels
 // it can be converted to contributing area by multiplying by the
 // DataResolution^2
 // In this function a pixel that has no donors has a contributing pixel value of 0
@@ -2394,8 +2707,8 @@ LSDIndexRaster LSDFlowInfo::calculate_n_pixels_contributing_from_upslope()
     receive_row = RowIndex[ receiver_node ];
     receive_col = ColIndex[ receiver_node ];
 
-    cout << "node " << node << " pixel: " << SVector[node] << " receiver: " << receiver_node << endl;
-    cout << "contributing: " << contributing_pixels[row][col] << endl;
+    //cout << "node " << node << " pixel: " << SVector[node] << " receiver: " << receiver_node << endl;
+    //cout << "contributing: " << contributing_pixels[row][col] << endl;
 
     if ( receiver_node  == SVector[node])
     {
@@ -2412,7 +2725,7 @@ LSDIndexRaster LSDFlowInfo::calculate_n_pixels_contributing_from_upslope()
       contributing_pixels[row][col]+1;
     }
 
-    cout << "recieving: " << contributing_pixels[receive_row][receive_col] << endl;
+    //cout << "recieving: " << contributing_pixels[receive_row][receive_col] << endl;
   }
 
   LSDIndexRaster temp_cp(NRows,NCols,XMinimum,YMinimum,DataResolution,NoDataValue,contributing_pixels,GeoReferencingStrings);
@@ -2426,7 +2739,7 @@ LSDIndexRaster LSDFlowInfo::calculate_n_pixels_contributing_from_upslope()
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 //
-// This function calcualtes the contributing pixels
+// This function calculates the contributing pixels
 // it can be converted to contributing area by multiplying by the
 // DataResolution^2
 //
@@ -2446,22 +2759,22 @@ void LSDFlowInfo::calculate_upslope_reference_indices()
 
   // loop through the s vector, adding pixels to receiver nodes
   for(int node = NDataNodes-1; node>=0; node--)
-    {
-      donor_node = SVector[node];
-      receiver_node = ReceiverVector[ donor_node ];
-
-      // every node is visited once and only once so we can map the
-      // unique positions of the nodes to the SVector
-      SVectorIndex[donor_node] = node;
-
-      // add the upslope area (note no action is taken
-      // for base level nodes since they donate to themselves and
-      // we must avoid float counting
-      if (donor_node != receiver_node)
   {
-    vectorized_area[ receiver_node ] +=  vectorized_area[ donor_node ];
-  }
+    donor_node = SVector[node];
+    receiver_node = ReceiverVector[ donor_node ];
+
+    // every node is visited once and only once so we can map the
+    // unique positions of the nodes to the SVector
+    SVectorIndex[donor_node] = node;
+
+    // add the upslope area (note no action is taken
+    // for base level nodes since they donate to themselves and
+    // we must avoid float counting
+    if (donor_node != receiver_node)
+    {
+      vectorized_area[ receiver_node ] +=  vectorized_area[ donor_node ];
     }
+  }
 
   NContributingNodes = vectorized_area;
 }
@@ -2481,6 +2794,38 @@ void LSDFlowInfo::calculate_upslope_reference_indices()
 vector<int> LSDFlowInfo::get_upslope_nodes(int node_number_outlet)
 {
   vector<int> us_nodes;
+
+  if(node_number_outlet < 0 || node_number_outlet > NDataNodes-1)
+    {
+      cout << "the node index does not exist" << endl;
+      exit(EXIT_FAILURE);
+    }
+
+  int start_SVector_node = SVectorIndex[node_number_outlet];
+  int end_SVector_node = start_SVector_node+NContributingNodes[node_number_outlet];
+
+  for(int node = start_SVector_node; node < end_SVector_node; node++)
+    {
+      us_nodes.push_back(SVector[node]);
+    }
+
+  return us_nodes;
+}
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+//
+// This function returns a integer vector containing all the node numbers upslope
+// of of the node with number node_number_outlet, and includes the outlet
+//
+// SMM 30/07/2019
+//
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+vector<int> LSDFlowInfo::get_upslope_nodes_include_outlet(int node_number_outlet)
+{
+  vector<int> us_nodes;
+  us_nodes.push_back(node_number_outlet);
 
   if(node_number_outlet < 0 || node_number_outlet > NDataNodes-1)
     {
@@ -2608,6 +2953,10 @@ LSDRaster LSDFlowInfo::get_upslope_node_mask(vector<int> source_nodes, vector<fl
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 LSDRaster LSDFlowInfo::upslope_variable_accumulator(LSDRaster& accum_raster)
 {
+  cout << "You are using the old and slow upslope accumulator. " << endl;
+  cout << "You should probably use upslope_variable_accumulator_v2" << endl;
+  cout << "This version does not accumulate at the base level nodes" << endl;
+
   int raster_NRows, raster_NCols;
   float raster_XMin, raster_YMin, raster_DataRes;
 
@@ -2622,45 +2971,252 @@ LSDRaster LSDFlowInfo::upslope_variable_accumulator(LSDRaster& accum_raster)
   if (raster_NRows != NRows || raster_NCols != NCols ||
       raster_XMin != XMinimum || raster_YMin != YMinimum ||
       raster_DataRes != DataResolution)
-    {
-      cout << "Warning!!, LSDFlowInfo::upslope_area_accumulator\n"
-     << "Accumulation raster does not match dimensions of original raster" << endl;
-      return accum_raster;
-    }
-  else
-    {
-      // create the data array
-      Array2D<float> accumulated_data_array(NRows,NCols,NoDataValue);
-
-      // loop through all the nodes, accumulating the areas
-      for(int this_node = 0; this_node <NDataNodes; this_node++)
   {
-    // get the upslope nodes
-    vector<int> node_vec = get_upslope_nodes(this_node);
+    cout << "Warning!!, LSDFlowInfo::upslope_area_accumulator\n"
+         << "Accumulation raster does not match dimensions of original raster" << endl;
+    exit(EXIT_FAILURE);
+    // return accum_raster;
+  }
+  else
+  {
+    // create the data array
+    Array2D<float> accumulated_data_array(NRows,NCols,NoDataValue);
 
-    // loop through these nodes, adding them to the accumulator
-    float this_node_accumulated = 0;
-    int this_row, this_col;
-    for (int ni = 0; ni<int(node_vec.size()); ni++)
+    // loop through all the nodes, accumulating the areas
+    for(int this_node = 0; this_node <NDataNodes; this_node++)
+    {
+      // get the upslope nodes
+      vector<int> node_vec = get_upslope_nodes(this_node);
+
+      // loop through these nodes, adding them to the accumulator
+      double this_node_accumulated = 0;
+      int this_row, this_col;
+      for (int ni = 0; ni<int(node_vec.size()); ni++)
       {
         retrieve_current_row_and_col(node_vec[ni],this_row,this_col);
-        this_node_accumulated += accum_raster.get_data_element(this_row, this_col);
+        this_node_accumulated += double(accum_raster.get_data_element(this_row, this_col));
       }
 
-    // write the accumulated variable to the array
-    int curr_row, curr_col;
-    retrieve_current_row_and_col(this_node,curr_row,curr_col);
-    accumulated_data_array[curr_row][curr_col] = this_node_accumulated;
+      // write the accumulated variable to the array
+      int curr_row, curr_col;
+      retrieve_current_row_and_col(this_node,curr_row,curr_col);
+      accumulated_data_array[curr_row][curr_col] = float(this_node_accumulated);
   }
-      // create the raster
-      LSDRaster accumulated_flow(NRows, NCols, XMinimum, YMinimum,
+  // create the raster
+  LSDRaster accumulated_flow(NRows, NCols, XMinimum, YMinimum,
             DataResolution, NoDataValue, accumulated_data_array,GeoReferencingStrings);
-      return accumulated_flow;
-    }
+  return accumulated_flow;
+  }
 }
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 
 
+LSDRaster LSDFlowInfo::upslope_variable_accumulator_v2(LSDRaster& accum_raster)
+{
+  this->upslope_variable_accumulator_v2(accum_raster, true);
+}
+
+
+
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+//
+//  Accumulate some variable (such a precipitation) from an accumulation raster
+//
+//  v2, I am trying to optimise it and remove the dependencies of having the exact same dimensions!
+//
+// SMM update 30/07/2019 Making sure this reflects nodata and getting rid of the
+//  topography raster
+//
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+LSDRaster LSDFlowInfo::upslope_variable_accumulator_v2(LSDRaster& accum_raster, bool accum_current_node)
+{
+  int raster_NRows, raster_NCols;
+  float raster_XMin, raster_YMin, raster_DataRes, raster_NoDataValue;
+
+  // first check to make sure the raster dimensions match that of the
+  // raster upon which LSDFlowInfo is based
+  raster_NRows =  accum_raster.get_NRows();
+  raster_NCols =  accum_raster.get_NCols();
+  raster_XMin  =  accum_raster.get_XMinimum();
+  raster_YMin  =  accum_raster.get_YMinimum();
+  raster_NoDataValue = accum_raster.get_NoDataValue();
+  raster_DataRes  =  accum_raster.get_DataResolution();
+
+  if (raster_NRows != NRows || raster_NCols != NCols ||
+      raster_XMin != XMinimum || raster_YMin != YMinimum ||
+      raster_DataRes != DataResolution)
+  {
+    cout << "Warning!!, LSDFlowInfo::upslope_area_accumulator\n"
+      << "Accumulation raster does not match dimensions of original raster\n"
+      << "The resampling need to be done before that step! I will now crash... \n"
+      << "I have heard that lsdtopytools does that for you automatically now!" << endl;
+    exit(EXIT_FAILURE);
+  }
+
+  // getting my clean vectors
+  map<string, vector< vector<int> > > these_vec = get_map_of_vectors();
+
+  // create the data array
+  Array2D<float> accumulated_data_array(NRows,NCols,raster_NoDataValue);
+  // Array2D<float> checker(NRows,NCols,goulg);
+  for(int row=0;row<NRows;row++)
+  {
+    for(int col=0;col<NCols;col++)
+    {
+      if(accum_raster.get_data_element(row,col)!=raster_NoDataValue)
+      {
+        accumulated_data_array[row][col] = 0;
+      }
+    }
+  }
+  cout << "Initiated the raster" << endl;
+
+  // I will comment that code to make sure that I am not misunderstanding things
+  // I am getting the number of nodes here
+  size_t n_vec = these_vec["inverted_stack_order"].size();
+  int tot_n = 0;
+  int tot_n_check = 0;
+  // Iterating through the inverted stack: the top of the hills will be processed before their downslope nodes
+  // Note that my these_vec is a map of vector of vectors where each vectors is a stack/inverted stack for a watershed
+  for(int i=0; i<int(n_vec); i++)
+  {
+    // Getting the current nodes of that watershed
+    vector<int> vec_of_node = these_vec["inverted_stack_order"][i];
+    // its size
+    size_t dat_vec_size = vec_of_node.size();
+    // Getting the numer of node I have processed in total
+    tot_n += int(dat_vec_size);
+    // Iterating through the nodes of that particular watersed (inverted stack)
+    for(size_t j=0; j<dat_vec_size; j++)
+    {
+      // current node
+      int this_node = vec_of_node[j];
+      // Getting the row and col indices
+      int row,col;
+      tot_n_check++;
+      row =  these_vec["inverted_rows"][i][j];
+      col = these_vec["inverted_cols"][i][j];
+
+      if (row <0 || row > NRows-1 || col < 0 || col > NCols-1)
+      {
+        cout << "Problem in accumulator, I'm about to crash" << endl;
+        cout << "row: " << row << " col: " << col << endl;
+      }
+
+      // First getting the accumulation of that particular current node <--- THIS MIGHT BE WHERE THE DIFFEREENCE IS SIMON
+      if(accum_current_node)
+      {
+        float increment_val = accum_raster.get_data_element(row,col);
+        accumulated_data_array[row][col] += increment_val;
+      }
+      // if my receiving node is not the same (i.e. if I am not a base level), I will transmit that accumulation to the receiving node
+      // first getting the receiving node
+      int recnode;
+      retrieve_receiver_information(this_node,recnode);
+      // Checking if I am not a base level
+      if(recnode != this_node)
+      {
+        int rrow,rcol;
+        // Getting the location of my receiving node
+        retrieve_current_row_and_col(recnode,rrow,rcol);
+        // Adding my accumulated data to that next node
+        accumulated_data_array[rrow][rcol] += accumulated_data_array[row][col];
+      }
+
+      // Going to the next node
+    }
+    // going to the next basin
+  }
+  // // Done
+
+  // create the raster
+  LSDRaster accumulated_flow(NRows, NCols, XMinimum, YMinimum,
+        DataResolution, NoDataValue, accumulated_data_array,GeoReferencingStrings);
+  return accumulated_flow;
+
+}
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+
+
+
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+//
+//  Accumulate some variable (such a precipitation) from an accumulation raster
+//
+//  v3, trying to simplify the code (SMM, 19/11/2019)
+//
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+LSDRaster LSDFlowInfo::upslope_variable_accumulator_v3(LSDRaster& accum_raster)
+{
+  int raster_NRows, raster_NCols;
+  float raster_XMin, raster_YMin, raster_DataRes, raster_NoDataValue;
+
+  // first check to make sure the raster dimensions match that of the
+  // raster upon which LSDFlowInfo is based
+  raster_NRows =  accum_raster.get_NRows();
+  raster_NCols =  accum_raster.get_NCols();
+  raster_XMin  =  accum_raster.get_XMinimum();
+  raster_YMin  =  accum_raster.get_YMinimum();
+  raster_NoDataValue = accum_raster.get_NoDataValue();
+  raster_DataRes  =  accum_raster.get_DataResolution();
+
+  if (raster_NRows != NRows || raster_NCols != NCols ||
+      raster_XMin != XMinimum || raster_YMin != YMinimum ||
+      raster_DataRes != DataResolution)
+  {
+    cout << "Warning!!, LSDFlowInfo::upslope_area_accumulator\n"
+      << "Accumulation raster does not match dimensions of original raster\n"
+      << "The resampling need to be done before that step! I will now crash... \n"
+      << "I have heard that lsdtopytools does that for you automatically now!" << endl;
+    exit(EXIT_FAILURE);
+  }
+
+  // We first loop through the the nodes, adding the value on that particular pixel
+  int row,col;
+  vector<float> vectorized_area(NDataNodes,raster_NoDataValue);
+  for (int node = 0; node<NDataNodes; node++)
+  {
+    row = RowIndex[node];
+    col = ColIndex[node];
+    vectorized_area[node] = accum_raster.get_data_element(row,col);
+  }
+
+  int receiver_node;
+  int donor_node;
+
+  // loop through the s vector, adding pixels to receiver nodes
+  for(int node = NDataNodes-1; node>=0; node--)
+  {
+    donor_node = SVector[node];
+    receiver_node = ReceiverVector[ donor_node ];
+
+    // add the upslope area (note no action is taken
+    // for base level nodes since they donate to themselves and
+    // we must avoid float counting
+    if (donor_node != receiver_node)
+    {
+      vectorized_area[ receiver_node ] +=  vectorized_area[ donor_node ];
+    }
+  }
+
+  // create the data array
+  Array2D<float> accumulated_data_array(NRows,NCols,raster_NoDataValue);
+  for (int node = 0; node<NDataNodes; node++)
+  {
+    row = RowIndex[node];
+    col = ColIndex[node];
+    accumulated_data_array[row][col] = vectorized_area[node];
+  }
+
+  // create the raster
+  LSDRaster accumulated_flow(NRows, NCols, XMinimum, YMinimum,
+        DataResolution, NoDataValue, accumulated_data_array,GeoReferencingStrings);
+  return accumulated_flow;
+
+}
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -2909,7 +3465,7 @@ map<int,float> LSDFlowInfo::get_upslope_chi_return_map(vector<int>& upslope_pixe
 
 
   int receiver_node;
-  int IndexOfReceiverInUplsopePList;
+  //int IndexOfReceiverInUplsopePList;
   float root2 = 1.41421356;
   float diag_length = root2*DataResolution;
   float dx;
@@ -2926,7 +3482,7 @@ map<int,float> LSDFlowInfo::get_upslope_chi_return_map(vector<int>& upslope_pixe
     exit(EXIT_FAILURE);
   }
 
-  int start_SVector_node = SVectorIndex[ upslope_pixel_list[0] ];
+  //int start_SVector_node = SVectorIndex[ upslope_pixel_list[0] ];
   map_of_chi[ upslope_pixel_list[0] ] = 0.0;
 
 
@@ -2938,7 +3494,7 @@ map<int,float> LSDFlowInfo::get_upslope_chi_return_map(vector<int>& upslope_pixe
     if (NContributingNodes[node] >= minimum_pixels)
     {
       receiver_node = ReceiverVector[ node ];
-      IndexOfReceiverInUplsopePList = SVectorIndex[receiver_node]-start_SVector_node;
+      //IndexOfReceiverInUplsopePList = SVectorIndex[receiver_node]-start_SVector_node;
       row = RowIndex[node];
       col = ColIndex[node];
 
@@ -2973,7 +3529,7 @@ map<int,float> LSDFlowInfo::get_upslope_chi_return_map(vector<int>& upslope_pixe
 
 
   int receiver_node;
-  int IndexOfReceiverInUplsopePList;
+  //int IndexOfReceiverInUplsopePList;
   float root2 = 1.41421356;
   float diag_length = root2*DataResolution;
   float dx;
@@ -2988,7 +3544,7 @@ map<int,float> LSDFlowInfo::get_upslope_chi_return_map(vector<int>& upslope_pixe
     exit(EXIT_FAILURE);
   }
 
-  int start_SVector_node = SVectorIndex[ upslope_pixel_list[0] ];
+  //int start_SVector_node = SVectorIndex[ upslope_pixel_list[0] ];
   map_of_chi[ upslope_pixel_list[0] ] = 0.0;
 
 
@@ -3001,7 +3557,7 @@ map<int,float> LSDFlowInfo::get_upslope_chi_return_map(vector<int>& upslope_pixe
     if (NContributingNodes[node] >= minimum_pixels)
     {
       receiver_node = ReceiverVector[ node ];
-      IndexOfReceiverInUplsopePList = SVectorIndex[receiver_node]-start_SVector_node;
+      //IndexOfReceiverInUplsopePList = SVectorIndex[receiver_node]-start_SVector_node;
       row = RowIndex[node];
       col = ColIndex[node];
 
@@ -3040,13 +3596,13 @@ map<int,float> LSDFlowInfo::get_upslope_chi_from_single_starting_node(int starti
 {
   // get the pixel list
   vector<int> upslope_pixel_list = get_upslope_nodes(starting_node);
-  
+
   //cout << "Number of upslope nodes is: " << upslope_pixel_list.size() << endl;
-  
+
   // Now get the upslope chi
   map<int,float> upslope_chi_map = get_upslope_chi_return_map(upslope_pixel_list,
                                                          m_over_n, A_0, minimum_pixels);
-  
+
   return upslope_chi_map;
 }
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -3058,16 +3614,16 @@ map<int,float> LSDFlowInfo::get_upslope_chi_from_single_starting_node(int starti
 // the value
 // Same as above but uses discharge
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-map<int,float> LSDFlowInfo::get_upslope_chi_from_single_starting_node(int starting_node, 
+map<int,float> LSDFlowInfo::get_upslope_chi_from_single_starting_node(int starting_node,
                                  float m_over_n, float A_0, int minimum_pixels, LSDRaster& Discharge)
 {
   // get the pixel list
   vector<int> upslope_pixel_list = get_upslope_nodes(starting_node);
-  
+
   // Now get the upslope chi
   map<int,float> upslope_chi_map = get_upslope_chi_return_map(upslope_pixel_list,
                                                          m_over_n, A_0, minimum_pixels, Discharge);
-  
+
   return upslope_chi_map;
 }
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -3513,7 +4069,7 @@ int LSDFlowInfo::get_node_index_of_coordinate_point(float X_coordinate, float Y_
 
   // Get row and column of point
   int col_point = int(X_coordinate_shifted_origin/DataResolution);
-  int row_point = (NRows-1) - int(round(Y_coordinate_shifted_origin/DataResolution));
+  int row_point = (NRows-1) - int(ceil(Y_coordinate_shifted_origin/DataResolution));
 
   // Get node of point
   int CurrentNode;
@@ -3904,6 +4460,133 @@ void LSDFlowInfo::D8_Trace(int i, int j, LSDIndexRaster StreamNetwork, float& le
 
 }
 
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+// This gets a flow path. Like D8 trace, but just get a vector of nodeindices rather than anything
+// more fancy
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+vector<int> LSDFlowInfo::get_flow_path(float x_loc, float y_loc)
+{
+  vector<int> node_list;
+  
+  // check to see if the node is in the raster
+  bool is_in_raster = check_if_point_is_in_raster(x_loc,y_loc);
+
+  int receiver_node, current_node;
+
+  // check that the point is not nodata and set is_in_raster to false if it is
+  if (is_in_raster)
+  {
+    current_node = get_node_index_of_coordinate_point(x_loc,y_loc);
+    node_list.push_back(current_node);
+
+    retrieve_receiver_information(current_node,receiver_node);
+
+    while (receiver_node != current_node)
+    {  // need to do edge checking
+
+      current_node = receiver_node;
+      retrieve_receiver_information(current_node,receiver_node);
+
+      node_list.push_back(current_node);
+    }
+  }
+  return node_list;
+}
+
+
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+// Prints a node list
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+void LSDFlowInfo::print_vector_of_nodeindices_to_csv_file_with_latlong(vector<int> node_list,string path, string filename)
+{
+  // these are for extracting element-wise data from the channel profiles.
+  int this_node, row,col;
+  double latitude,longitude;
+  double x_loc,y_loc;
+  LSDCoordinateConverterLLandUTM Converter;
+
+  // find the number of nodes
+  int n_nodes = int(node_list.size());
+
+  // open the data file
+  ofstream chan_out;
+  string chan_fname = path+filename+"_nodes.csv";
+  chan_out.open(chan_fname.c_str());
+  chan_out << "nodeindex,row,column,latitude,longitude,x,y" << endl;
+  if (n_nodes <= 0)
+  {
+    cout << "Cannot print since you have not calculated channel properties yet." << endl;
+  }
+
+  for (int n = 0; n<n_nodes; n++)
+  {
+    this_node = node_list[n];
+    retrieve_current_row_and_col(this_node,row,col);
+    get_lat_and_long_locations(row, col, latitude, longitude, Converter);
+    get_x_and_y_locations(row, col, x_loc, y_loc);
+
+    chan_out << this_node << ","
+                   << row << ","
+                   << col << ",";
+    chan_out.precision(9);
+    chan_out << latitude << ","
+             << longitude << ",";
+    chan_out.precision(9);
+    chan_out << x_loc << "," << y_loc << endl;
+  }
+}
+
+
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+// Prints a node list, with some extra bells and whistles
+// Basically you get extra data members so that you can print a channel profile
+// in excel (so undergraduate friendly)
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+void LSDFlowInfo::print_vector_of_nodeindices_to_csv_file_with_latlong(vector<int> node_list,string path, string filename,
+                                                                       LSDRaster& Elevation, LSDRaster& FlowDistance,
+                                                                       LSDRaster& drainage_area)
+{
+  // these are for extracting element-wise data from the channel profiles.
+  int this_node, row,col;
+  double latitude,longitude;
+  double x_loc,y_loc;
+  LSDCoordinateConverterLLandUTM Converter;
+
+  // find the number of nodes
+  int n_nodes = int(node_list.size());
+
+  // open the data file
+  ofstream chan_out;
+  string chan_fname = path+filename+"_nodes.csv";
+  chan_out.open(chan_fname.c_str());
+  chan_out << "id,row,column,latitude,longitude,x,y, flow distance(m), drainage area (m^2), elevation(m)" << endl;
+  if (n_nodes <= 0)
+  {
+    cout << "Cannot print since you have not calculated channel properties yet." << endl;
+  }
+
+  for (int n = 0; n<n_nodes; n++)
+  {
+    this_node = node_list[n];
+    retrieve_current_row_and_col(this_node,row,col);
+    get_lat_and_long_locations(row, col, latitude, longitude, Converter);
+    get_x_and_y_locations(row, col, x_loc, y_loc);
+
+    chan_out << this_node << ","
+                   << row << ","
+                   << col << ",";
+    chan_out.precision(9);
+    chan_out << latitude << ","
+             << longitude << ",";
+    chan_out.precision(9);
+    chan_out << x_loc << "," << y_loc << ",";
+    chan_out.precision(6);
+    chan_out << FlowDistance.get_data_element(row,col) << "," << drainage_area.get_data_element(row,col) << "," << Elevation.get_data_element(row,col) << endl;
+  }
+}
+
+
+
 // Move the location of the channel head downslope by a user defined distance.
 // Returns A vector of node indexes pointing to the moved heads.
 // SWDG 27/11/15
@@ -3982,7 +4665,9 @@ void LSDFlowInfo::MoveChannelHeadUp(vector<int> Sources, float MoveDist, LSDRast
     while (length < MoveDist){
 
       float currentElevation;
-      int Direction; //1 is cardinal 2 is diagonal
+      int Direction = 1; //1 is cardinal 2 is diagonal 1 is default
+      new_j = 1;    // default
+      new_i = 1;    // default
 
       //find the neighbour with the maximum Elevation
 
@@ -4053,8 +4738,14 @@ void LSDFlowInfo::MoveChannelHeadUp(vector<int> Sources, float MoveDist, LSDRast
       }
 
       //update length
-      if (Direction == 1){ length += DataResolution; }
-      else if (Direction == 2){ length += (DataResolution * root_2); }
+      if (Direction == 1)
+      {
+        length += DataResolution;
+      }
+      else if (Direction == 2)
+      {
+        length += (DataResolution * root_2);
+      }
 
       i = new_i;
       j = new_j;
@@ -4082,7 +4773,8 @@ void LSDFlowInfo::HilltopFlowRoutingOriginal(LSDRaster Elevation, LSDRaster Hill
   int flag, count;
   double PI = 3.14159265;
   double degs, degs_old, degs_new, theta;
-  double s_local, s_edge;
+  double s_local;
+  double s_edge;
   double xo, yo, xi, yi, temp_yo1, temp_yo2, temp_xo1, temp_xo2;
 
   // a direction flag numbered 1,2,3,4 for E,S,W,N respectively
@@ -4323,112 +5015,127 @@ void LSDFlowInfo::HilltopFlowRoutingOriginal(LSDRaster Elevation, LSDRaster Hill
       slope_total += s_local*d;
     }
 
-    else {
+    else
+    {
 
       // ROUTE ALONG EDGES
-      if (dir  == 1) {
-        if   (degs_old <= 90 || degs_new >= 270) {
-    xo = 0.00001, yo = 1;
-    s_edge = abs(s_local*sin(theta));
-    d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
-    xi = xo, yi = 1-yo;
-    dir = 4;
-    east_vec[count] = easting[b] + xo - 0.5*dem_res;
-    north_vec[count] = northing[a] + 0.5*dem_res;
-    --a;
+      if (dir  == 1)
+      {
+        if   (degs_old <= 90 || degs_new >= 270)
+        {
+          xo = 0.00001, yo = 1;
+          s_edge = abs(s_local*sin(theta));
+          d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
+          xi = xo, yi = 1-yo;
+          dir = 4;
+          east_vec[count] = easting[b] + xo - 0.5*dem_res;
+          north_vec[count] = northing[a] + 0.5*dem_res;
+          --a;
         }
-        else if (degs_old > 90 && degs_new < 270) {
-    xo = 0.00001, yo = 0;
-    s_edge = abs(s_local*sin((PI/2)-theta));
-    d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
-    xi = xo, yi = 1-yo;
-    dir = 2;
-    east_vec[count] = easting[b] + xo - 0.5*dem_res;
-    north_vec[count] = northing[a] - 0.5*dem_res;
-    ++a;
+        else if (degs_old > 90 && degs_new < 270)
+        {
+          xo = 0.00001, yo = 0;
+          s_edge = abs(s_local*sin((PI/2)-theta));
+          d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
+          xi = xo, yi = 1-yo;
+          dir = 2;
+          east_vec[count] = easting[b] + xo - 0.5*dem_res;
+          north_vec[count] = northing[a] - 0.5*dem_res;
+          ++a;
         }
-        else {
-    cout << "Flow unable to route N or S" << endl;
-    exit(EXIT_FAILURE);
-        }
-      }
-      else if (dir == 2) {
-        if   (degs_old <= 180 && degs_new >= 0) {
-    xo = 1, yo = 1-0.00001;
-    s_edge = abs(s_local*sin((2/PI)-theta));
-    d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
-    xi = 1-xo, yi = yo;
-    dir = 1;
-    east_vec[count] = easting[b] + 0.5*dem_res;
-    north_vec[count] = northing[a] + yo - 0.5*dem_res;
-    ++b;
-        }
-        else if (degs_old > 180 && degs_new < 360) {
-    xo = 0, yo = 1-0.00001;
-    s_edge = abs(s_local*sin(theta));
-    d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
-    xi = 1-xo, yi = yo;
-    dir = 3;
-    east_vec[count] = easting[b] -0.5*dem_res;
-    north_vec[count] = northing[a] + yo - 0.5*dem_res;
-    --b;
-
-        }
-        else {
-    cout << "Flow unable to route E or W" << endl;
-    exit(EXIT_FAILURE);
+        else
+        {
+          cout << "Flow unable to route N or S" << endl;
+          exit(EXIT_FAILURE);
         }
       }
-      else if (dir == 3) {
-        if   (degs_old <= 270 && degs_new >= 90) {
-    xo = 1-0.00001, yo = 0;
-    s_edge = abs(s_local*sin(theta));
-    d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
-    xi = xo, yi = 1-yo;
-    dir = 2;
-    east_vec[count] = easting[b] + xo - 0.5*dem_res;
-    north_vec[count] = northing[a] - 0.5*dem_res;
-    ++a;
+      else if (dir == 2)
+      {
+        if (degs_old <= 180 && degs_new >= 0)
+        {
+          xo = 1, yo = 1-0.00001;
+          s_edge = abs(s_local*sin((2/PI)-theta));
+          d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
+          xi = 1-xo, yi = yo;
+          dir = 1;
+          east_vec[count] = easting[b] + 0.5*dem_res;
+          north_vec[count] = northing[a] + yo - 0.5*dem_res;
+          ++b;
         }
-        else if (degs_old > 270 || degs_new < 90) {
-    xo = 1-0.00001, yo = 1;
-    s_edge = abs(s_local*sin((2/PI) - theta));
-    d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
-    xi = xo, yi = 1- yo;
-    dir = 4;
-    east_vec[count] = easting[b] + xo - 0.5*dem_res;
-    north_vec[count] = northing[a] + 0.5*dem_res;
-    --a;
+        else if (degs_old > 180 && degs_new < 360)
+        {
+          xo = 0, yo = 1-0.00001;
+          s_edge = abs(s_local*sin(theta));
+          d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
+          xi = 1-xo, yi = yo;
+          dir = 3;
+          east_vec[count] = easting[b] -0.5*dem_res;
+          north_vec[count] = northing[a] + yo - 0.5*dem_res;
+          --b;
         }
-        else {
-    cout << "Flow unable to route N or S" << endl;
-    exit(EXIT_FAILURE);
+        else
+         {
+          cout << "Flow unable to route E or W" << endl;
+          exit(EXIT_FAILURE);
+        }
+      }
+      else if (dir == 3)
+      {
+        if   (degs_old <= 270 && degs_new >= 90)
+        {
+          xo = 1-0.00001, yo = 0;
+          s_edge = abs(s_local*sin(theta));
+          d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
+          xi = xo, yi = 1-yo;
+          dir = 2;
+          east_vec[count] = easting[b] + xo - 0.5*dem_res;
+          north_vec[count] = northing[a] - 0.5*dem_res;
+          ++a;
+        }
+        else if (degs_old > 270 || degs_new < 90)
+        {
+          xo = 1-0.00001, yo = 1;
+          s_edge = abs(s_local*sin((2/PI) - theta));
+          d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
+          xi = xo, yi = 1- yo;
+          dir = 4;
+          east_vec[count] = easting[b] + xo - 0.5*dem_res;
+          north_vec[count] = northing[a] + 0.5*dem_res;
+          --a;
+        }
+        else
+        {
+          cout << "Flow unable to route N or S" << endl;
+          exit(EXIT_FAILURE);
         }
       }
       else if (dir == 4) {
-        if   (degs_old <= 360 && degs_new >= 180) {
-    xo = 0, yo = 0.00001;
-    s_edge = abs(s_local*sin((PI/2) - theta));
-    d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
-    xi = 1-xo, yi = yo;
-    dir = 3;
-    east_vec[count] = easting[b] -0.5*dem_res;
-    north_vec[count] = northing[a] + yo - 0.5*dem_res;
-    --b;
+        if   (degs_old <= 360 && degs_new >= 180)
+        {
+          xo = 0, yo = 0.00001;
+          s_edge = abs(s_local*sin((PI/2) - theta));
+          d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
+          xi = 1-xo, yi = yo;
+          dir = 3;
+          east_vec[count] = easting[b] -0.5*dem_res;
+          north_vec[count] = northing[a] + yo - 0.5*dem_res;
+          --b;
         }
-        else if (degs_old > 0 && degs_new < 180) {
-    xo = 1, yo = 0.00001;
-    s_edge = abs(s_local*sin(theta));
-    d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
-    xi = 1-xo, yi = yo;
-    dir = 1;
-    east_vec[count] = easting[b] + 0.5*dem_res;
-    north_vec[count] = northing[a] + yo - 0.5*dem_res;
-    ++b;
+        else if (degs_old > 0 && degs_new < 180)
+        {
+          xo = 1, yo = 0.00001;
+          s_edge = abs(s_local*sin(theta));
+          d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
+          xi = 1-xo, yi = yo;
+          dir = 1;
+          east_vec[count] = easting[b] + 0.5*dem_res;
+          north_vec[count] = northing[a] + yo - 0.5*dem_res;
+          ++b;
         }
-        else {
-    cout << "Flow unable to route E or W" << endl;
-    exit(EXIT_FAILURE);
+        else
+        {
+          cout << "Flow unable to route E or W" << endl;
+          exit(EXIT_FAILURE);
         }
       }
       slope_total += s_edge*d;
@@ -4449,7 +5156,7 @@ void LSDFlowInfo::HilltopFlowRoutingOriginal(LSDRaster Elevation, LSDRaster Hill
     {
       if (path[a][b] == 1)
         {
-    cout << "Didn't make it to a channel!" << endl;
+          cout << "Didn't make it to a channel!" << endl;
         }
 
       //          // PRINT TO FILE Cht Sbar Relief Lh
@@ -4522,9 +5229,9 @@ void LSDFlowInfo::HilltopFlowRoutingOriginal(LSDRaster Elevation, LSDRaster Hill
 //
 // SWDG 12/2/14
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting(LSDRaster Elevation, LSDRaster Hilltop_ID, LSDRaster Slope, LSDRaster Aspect, LSDRaster HilltopCurv, LSDRaster PlanCurvature,  
-                                                         LSDIndexRaster StreamNetwork, LSDIndexRaster Basins, 
-                                                         string Prefix, 
+vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting(LSDRaster Elevation, LSDRaster Hilltop_ID, LSDRaster Slope, LSDRaster Aspect, LSDRaster HilltopCurv, LSDRaster PlanCurvature,
+                                                         LSDIndexRaster StreamNetwork, LSDIndexRaster Basins,
+                                                         string Prefix,
                                                          bool print_paths_switch, int thinning, string trace_path, bool basin_filter_switch,
                                                          vector<int> Target_Basin_Vector)
 {
@@ -4541,7 +5248,8 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting(LSDRaster Elevation, LS
   int PlanarCountFlag;
   float PI = 3.14159265;
   float degs, degs_new, theta;
-  float s_local, s_edge;
+  //float s_local;
+  //float s_edge;
   float xo, yo, xi, yi, temp_yo1, temp_yo2, temp_xo1, temp_xo2;
   bool skip_trace; //flag used to skip traces where no path to a stream can be found. Will only occur on noisy, raw topography
   float E_Star = 0;
@@ -4595,16 +5303,21 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting(LSDRaster Elevation, LS
     cout << "\nFATAL ERROR: unable to write to " << ss_filename.str() << endl;
     exit(EXIT_FAILURE);
   }
-  ofs << "X,Y,i,j,hilltop_id,Cht,S,R,Lh,BasinID,a,b,StreamID,HilltopSlope,DivergentCount,PlanarCountFlag,E_Star,R_Star,EucDist\n";
+  ofs << "easting,northing,i,j,hilltop_id,Cht,S,R,Lh,BasinID,a,b,StreamID,HilltopSlope,DivergentCount,PlanarCountFlag,E_Star,R_Star,EucDist\n";
 
   //calculate northing and easting
+  cout << "XMinimum is " << XMinimum << endl;
+  cout << "YMinimum is " << YMinimum << endl;
+  cout << "ymax is " << ymax << endl;
+
   for (i=0;i<NRows;++i) northing.push_back(ymax - DataResolution*(i - 0.5));
   for (j=0;j<NCols;++j) easting.push_back(XMinimum + DataResolution*(j + 0.5));
 
+
   //convert aspects to radians with east as theta = 0/2*pi
-  for (i=0; i<NRows; ++i) 
+  for (i=0; i<NRows; ++i)
   {
-    for (j=0; j<NCols; ++j) 
+    for (j=0; j<NCols; ++j)
     {
       //convert aspects to radians with east as theta = 0/2*pi
       if (rads[i][j] != NoDataValue) rads[i][j] = BearingToRad(aspect[i][j]);
@@ -4612,10 +5325,10 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting(LSDRaster Elevation, LS
   }
 
   // cycle through study area, find hilltops and trace downstream
-  for (i=1; i<NRows-1; ++i) 
+  for (i=1; i<NRows-1; ++i)
   {
     cout << flush <<  "\tRow: " << i << " of = " << NRows-1 << "              \r";
-    for (j=1; j<NCols-1; ++j) 
+    for (j=1; j<NCols-1; ++j)
     {
 
       // ignore edge cells and non-hilltop cells
@@ -4648,12 +5361,12 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting(LSDRaster Elevation, LS
         north_vec.push_back(northing[a]);
         zeta_vec.push_back(zeta[a][b]);
         length_vec.push_back(length);
-        
-        s_local = slope[a][b];
+
+        //s_local = slope[a][b];
 
         //test direction, calculate outlet coordinates and update indicies
         // easterly
-        if (degs >= 45 && degs < 135) 
+        if (degs >= 45 && degs < 135)
         {
           //cout << "\neasterly" << endl;
           xo = 1, yo = (1+tan(theta))/2;
@@ -4667,7 +5380,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting(LSDRaster Elevation, LS
           else if (yi == 1) yi = 1 - 0.00001;
         }
         //southerly
-        else if (degs >= 135 && degs < 225) 
+        else if (degs >= 135 && degs < 225)
         {
           //cout << "\nsoutherly" << endl;
           xo = (1-(1/tan(theta)))/2, yo = 0;
@@ -4681,7 +5394,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting(LSDRaster Elevation, LS
           else if (xi == 1) xi = 1 - 0.00001;
         }
         // westerly
-        else if (degs >= 225 && degs < 315) 
+        else if (degs >= 225 && degs < 315)
         {
           xo = 0, yo = (1-tan(theta))/2;
           d = abs(1/(2*cos(theta)));
@@ -4694,7 +5407,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting(LSDRaster Elevation, LS
           else if (yi == 1) yi = 1 - 0.00001;
         }
         //northerly
-        else if (degs >= 315 || degs < 45) 
+        else if (degs >= 315 || degs < 45)
         {
           xo = (1+(1/tan(theta)))/2, yo = 1;
           d = abs(1/(2*cos((PI/2) - theta)));
@@ -4706,20 +5419,20 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting(LSDRaster Elevation, LS
           if (xi == 0) xi = 0.00001;
           else if (xi == 1) xi = 1 - 0.00001;
         }
-        else 
+        else
         {
           cout << "FATAL ERROR, Kinematic routing algorithm enountered null aspect value" << endl;
           exit(EXIT_FAILURE);
         }
-        
+
         //collect slopes and totals weighted by path length
         length += d;
-        s_local = slope[a][b];
-        
+        //s_local = slope[a][b];
+
         //update elevation length vectors
         zeta_vec.push_back(zeta[a][b]);
         length_vec.push_back(length*DataResolution);
-        
+
         //continue trace until a stream node is encountered
         while (flag == true && a > 0 && a < NRows-1 && b > 0 && b < NCols-1)
         {   //added boudary checking to catch cells which flow off the  edge of the DEM tile.
@@ -4734,7 +5447,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting(LSDRaster Elevation, LS
           if ((dir == 1 && degs_new > 0 && degs_new < 180)
               || (dir == 2 && degs_new > 90 && degs_new < 270)
               || (dir == 3 && degs_new > 180 && degs_new < 360)
-              || ((dir == 4 && degs_new > 270) || (dir == 4 && degs_new < 90))) 
+              || ((dir == 4 && degs_new > 270) || (dir == 4 && degs_new < 90)))
           {
 
             //DO NORMAL FLOW PATH
@@ -4750,9 +5463,9 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting(LSDRaster Elevation, LS
             else if (dir == 3) temp_yo1 = -1;
             else if (dir == 4) temp_xo2 = -1;
 
-            s_local = slope[a][b];
+            //s_local = slope[a][b];
 
-            if (temp_yo1 <= 1 && temp_yo1 > 0) 
+            if (temp_yo1 <= 1 && temp_yo1 > 0)
             {
               xo = 1, yo = temp_yo1;
               d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
@@ -4764,7 +5477,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting(LSDRaster Elevation, LS
               if (xi== 0 && yi == 0) yi = 0.00001;
               else if (xi== 0 && yi == 1) yi = 1 - 0.00001;
             }
-            else if (temp_xo2 <= 1 && temp_xo2 > 0) 
+            else if (temp_xo2 <= 1 && temp_xo2 > 0)
             {
               xo = temp_xo2, yo = 0;
               d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
@@ -4776,7 +5489,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting(LSDRaster Elevation, LS
               if (xi== 0 && yi == 1) xi = 0.00001;
               else if (xi== 1 && yi == 1) xi = 1 - 0.00001;
             }
-            else if (temp_yo2 <= 1 && temp_yo2 > 0) 
+            else if (temp_yo2 <= 1 && temp_yo2 > 0)
             {
               xo = 0, yo = temp_yo2;
               d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
@@ -4788,7 +5501,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting(LSDRaster Elevation, LS
               if (xi== 1 && yi == 0) yi = 0.00001;
               else if (xi== 1 && yi == 1) yi = 1 - 0.00001;
             }
-            else if (temp_xo1 <= 1 && temp_xo1 > 0) 
+            else if (temp_xo1 <= 1 && temp_xo1 > 0)
             {
               xo = temp_xo1, yo = 1;
               d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
@@ -4804,13 +5517,13 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting(LSDRaster Elevation, LS
           else
           {
             // ROUTE ALONG EDGES
-            if (dir  == 1) 
+            if (dir  == 1)
             {
               if (degs_new <= 90 || degs_new >= 270)
-              { 
+              {
                 //secondary compenent of flow is north
                 xo = 0.00001, yo = 1;
-                s_edge = abs(s_local*sin(theta));
+                //s_edge = abs(s_local*sin(theta));
                 d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
                 xi = xo, yi = 1-yo;
                 dir = 4;
@@ -4820,7 +5533,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting(LSDRaster Elevation, LS
               }
               else if (degs_new > 90 && degs_new < 270) {  //secondary component is south
                 xo = 0.00001, yo = 0;
-                s_edge = abs(s_local*sin((PI/2)-theta));
+                //s_edge = abs(s_local*sin((PI/2)-theta));
                 d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
                 xi = xo, yi = 1-yo;
                 dir = 2;
@@ -4836,13 +5549,13 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting(LSDRaster Elevation, LS
                 //exit(EXIT_FAILURE);
               }
             }
-            else if (dir == 2) 
+            else if (dir == 2)
             {
-              if (degs_new >= 0 && degs_new <= 180) 
-              { 
+              if (degs_new >= 0 && degs_new <= 180)
+              {
                 //secondary component is East
                 xo = 1, yo = 1-0.00001;
-                s_edge = abs(s_local*sin((2/PI)-theta));
+                //s_edge = abs(s_local*sin((2/PI)-theta));
                 d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
                 xi = 1-xo, yi = yo;
                 dir = 1;
@@ -4850,11 +5563,11 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting(LSDRaster Elevation, LS
                 north_vec.push_back(northing[a] + (yo - 0.5)*DataResolution);
                 ++b;
               }
-              else if (degs_new > 180 && degs_new <= 360) 
+              else if (degs_new > 180 && degs_new <= 360)
               {
                 //secondary component is West
                 xo = 0, yo = 1-0.00001;
-                s_edge = abs(s_local*sin(theta));
+                //s_edge = abs(s_local*sin(theta));
                 d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
                 xi = 1-xo, yi = yo;
                 dir = 3;
@@ -4862,7 +5575,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting(LSDRaster Elevation, LS
                 north_vec.push_back(northing[a] + (yo - 0.5)*DataResolution);
                 --b;
               }
-              else 
+              else
               {
                 cout << "Flow unable to route E or W" << endl; //something has gone very wrong...
                 cout << "Trace skipped.\n" << endl;
@@ -4870,13 +5583,13 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting(LSDRaster Elevation, LS
                             //exit(EXIT_FAILURE);
               }
             }
-            else if (dir == 3) 
+            else if (dir == 3)
             {
-              if   (degs_new >= 90 && degs_new <= 270) 
+              if   (degs_new >= 90 && degs_new <= 270)
               {
                 //secondary component is South
                 xo = 1-0.00001, yo = 0;
-                s_edge = abs(s_local*sin(theta));
+                //s_edge = abs(s_local*sin(theta));
                 d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
                 xi = xo, yi = 1-yo;
                 dir = 2;
@@ -4884,11 +5597,11 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting(LSDRaster Elevation, LS
                 north_vec.push_back(northing[a] - 0.5*DataResolution);
                 ++a;
               }
-              else if (degs_new > 270 || degs_new < 90) 
+              else if (degs_new > 270 || degs_new < 90)
               {
                 //secondary component is North
                 xo = 1-0.00001, yo = 1;
-                s_edge = abs(s_local*sin((2/PI) - theta));
+                //s_edge = abs(s_local*sin((2/PI) - theta));
                 d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
                 xi = xo, yi = 1- yo;
                 dir = 4;
@@ -4904,13 +5617,13 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting(LSDRaster Elevation, LS
                           //exit(EXIT_FAILURE);
               }
             }
-            else if (dir == 4) 
+            else if (dir == 4)
             {
               if   (degs_new >= 180 && degs_new <= 360)
               {
                 //secondary component is West
                 xo = 0, yo = 0.00001;
-                s_edge = abs(s_local*sin((PI/2) - theta));
+                //s_edge = abs(s_local*sin((PI/2) - theta));
                 d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
                 xi = 1-xo, yi = yo;
                 dir = 3;
@@ -4922,7 +5635,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting(LSDRaster Elevation, LS
               {
                 //secondary component is East
                 xo = 1, yo = 0.00001;
-                s_edge = abs(s_local*sin(theta));
+                //s_edge = abs(s_local*sin(theta));
                 d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
                 xi = 1-xo, yi = yo;
                 dir = 1;
@@ -4930,7 +5643,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting(LSDRaster Elevation, LS
                 north_vec.push_back(northing[a] + (yo - 0.5)*DataResolution);
                 ++b;
               }
-              else 
+              else
               {
                 cout << "Flow unable to route E or W" << endl; //something has gone very wrong...
                 cout << "Trace skipped.\n" << endl;
@@ -4952,21 +5665,21 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting(LSDRaster Elevation, LS
 
           zeta_vec.push_back(zeta[a][b]);
           length_vec.push_back(length*DataResolution);
-          
+
           // test for plan curvature here and set a flag if flow is divergent or convergent but continue trace regardless
           // The larger the counter the more convergent or divergent the trace is
           if (abs(PlanCurvature.get_data_element(a,b)) > (0.001))
           {
             ++DivergentCountFlag;
           }
-          else 
+          else
           {
             ++PlanarCountFlag;
           }
 
           if (a == 0 || b == 0 ||  a == NRows-1 || b == NCols-1 || stnet[a][b] != NoDataValue || path[a][b] >= 3 || skip_trace == true) flag = false;
         }
-  
+
         if (a == 0 || b == 0 ||  a == NRows-1 || b == NCols-1 )
         {
           // avoid going out of bounds.
@@ -4987,8 +5700,8 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting(LSDRaster Elevation, LS
 
             ++s_count;
 
-            X = XMinimum + j*DataResolution;
-            Y = YMinimum - (NRows-i)*DataResolution;
+            X = easting[j];
+            Y = northing[i];
             relief = zeta[i][j] - zeta[a][b];
             mean_slope = relief/(length * DataResolution);
 
@@ -5004,18 +5717,18 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting(LSDRaster Elevation, LS
 
             //calulate the Euclidean distance between the start and end points of the trace
             EucDist = sqrt((pow(((i+0.5)-(a+yo)),2) + pow(((j+0.5)-(b+xo)),2))) * DataResolution;
-    
+
             if (relief > 0)
             {
               ofs << X << "," << Y << "," << i << "," << j << "," << hilltop_ID[i][j] << "," << CHT[i][j] << "," << mean_slope << "," << relief << "," << length*DataResolution << "," << basin[a][b] << "," << a << "," << b << "," << stnet[a][b] << "," << slope[i][j] << "," << DivergentCountFlag << "," << PlanarCountFlag << "," << E_Star << "," << R_Star << "," << EucDist << "\n";
             }
-            else 
+            else
             {
               ++neg_count;
             }
           }
           else
-          {  
+          {
             //unable to route using aspects
             //this will encompass skipped traces
             //ofs << "fail: " << a << " " << b << " " << i << " " << j << endl;
@@ -5030,11 +5743,11 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting(LSDRaster Elevation, LS
           {
             if (hilltop_ID[i][j] != NoDataValue) // && skip_trace == false)
             { //check that the current i,j tuple corresponds to a hilltop, ie there is actually a trace to write to file, and check that the trace was valid.
-              
+
               //declare some params for lat long conversion
               double latitude,longitude;
               LSDCoordinateConverterLLandUTM Converter;
-              
+
 	            //create the output filename from the user supplied path
               ofstream pathwriter;
               string OutputFileName = Prefix+"_hillslope_traces.csv";
@@ -5042,7 +5755,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting(LSDRaster Elevation, LS
 	            bool FileExists = false;
 	            if (oftest) FileExists = true;
 	            oftest.close();
-	            
+
 	            //open the output filestream and write headers
 	            ofstream WriteTracesFile;
 	            if (FileExists == 0)
@@ -5052,7 +5765,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting(LSDRaster Elevation, LS
                 if (WriteTracesFile.is_open()) WriteTracesFile << "HilltopID,Easting,Northing,Latitude,Longitude,Distance,Elevation" << endl;
 	            }
 	            WriteTracesFile.close();
-              
+
               //open output filestream again to  coastline data
 	            WriteTracesFile.open(OutputFileName.c_str(), fstream::app|fstream::out);
 
@@ -5063,7 +5776,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting(LSDRaster Elevation, LS
 		            {
                   //get lat long for printing to file
                   get_lat_and_long_locations(east_vec[v], north_vec[v], latitude, longitude, Converter);
-                  
+
                   if (basin_filter_switch == false)
                   {
                     WriteTracesFile << ht_count << "," << setiosflags(ios::fixed) << setprecision(10) << east_vec[v] << "," << north_vec[v] << "," << latitude << "," << longitude << "," << length_vec[v] << "," << zeta_vec[v] << endl;
@@ -5155,8 +5868,10 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_RAW(LSDRaster Elevation
   int DivergentCountFlag = 0; //Flag used to count the number of divergent cells encountered in a trace
   int PlanarCountFlag = 0;
   float PI = 3.14159265;
-  float degs, degs_old, degs_new, theta;
-  float s_local, s_edge;
+  float degs, degs_new, theta;
+  //float degs_old;
+  //float s_local;
+  //float s_edge;
   float xo, yo, xi, yi, temp_yo1, temp_yo2, temp_xo1, temp_xo2;
   bool skip_trace; //flag used to skip traces where no path to a stream can be found. Will only occur on noisy, raw topography
   float E_Star = 0;
@@ -5257,7 +5972,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_RAW(LSDRaster Elevation
   path[a][b] += 1;
   east_vec[0] = easting[b];
   north_vec[0] = northing[a];
-  s_local = slope[a][b];
+  //s_local = slope[a][b];
 
   //test direction, calculate outlet coordinates and update indicies
   // easterly
@@ -5317,7 +6032,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_RAW(LSDRaster Elevation
 
   //collect slopes and totals weighted by path length
   length += d;
-  s_local = slope[a][b];
+  //s_local = slope[a][b];
 
   //continue trace until a stream node is encountered
   while (flag == true && a > 0 && a < NRows-1 && b > 0 && b < NCols-1) {   //added boudary checking to catch cells which flow off the  edge of the DEM tile.
@@ -5326,7 +6041,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_RAW(LSDRaster Elevation
 
     path[a][b] += 1;
 
-    degs_old = degs;
+    //degs_old = degs;
     degs_new = aspect[a][b];
     theta = rads[a][b];
           ++count;
@@ -5350,7 +6065,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_RAW(LSDRaster Elevation
       else if (dir == 3) temp_yo1 = -1;
       else if (dir == 4) temp_xo2 = -1;
 
-      s_local = slope[a][b];
+      //s_local = slope[a][b];
 
       if (temp_yo1 <= 1 && temp_yo1 > 0) {
         xo = 1, yo = temp_yo1;
@@ -5405,7 +6120,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_RAW(LSDRaster Elevation
       if (dir == 1) {
         if (degs_new <= 90 || degs_new >= 270) { //secondary compenent of flow is north
     xo = 0.00001, yo = 1;
-    s_edge = abs(s_local*sin(theta));
+    //s_edge = abs(s_local*sin(theta));
     d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
     xi = xo, yi = 1-yo;
     dir = 4;
@@ -5415,7 +6130,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_RAW(LSDRaster Elevation
         }
         else if (degs_new > 90 && degs_new < 270) {  //secondary component is south
     xo = 0.00001, yo = 0;
-    s_edge = abs(s_local*sin((PI/2)-theta));
+    //s_edge = abs(s_local*sin((PI/2)-theta));
     d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
     xi = xo, yi = 1-yo;
     dir = 2;
@@ -5433,7 +6148,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_RAW(LSDRaster Elevation
       else if (dir == 2) {
         if   (degs_new >= 0 && degs_new <= 180) { //secondary component is East
     xo = 1, yo = 1-0.00001;
-    s_edge = abs(s_local*sin((2/PI)-theta));
+    //s_edge = abs(s_local*sin((2/PI)-theta));
     d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
     xi = 1-xo, yi = yo;
     dir = 1;
@@ -5443,7 +6158,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_RAW(LSDRaster Elevation
         }
         else if (degs_new > 180 && degs_new <= 360) {  //secondary component is West
     xo = 0, yo = 1-0.00001;
-    s_edge = abs(s_local*sin(theta));
+    //s_edge = abs(s_local*sin(theta));
     d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
     xi = 1-xo, yi = yo;
     dir = 3;
@@ -5461,7 +6176,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_RAW(LSDRaster Elevation
       else if (dir == 3) {
         if   (degs_new >= 90 && degs_new <= 270) {  //secondary component is South
     xo = 1-0.00001, yo = 0;
-    s_edge = abs(s_local*sin(theta));
+    //s_edge = abs(s_local*sin(theta));
     d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
     xi = xo, yi = 1-yo;
     dir = 2;
@@ -5471,7 +6186,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_RAW(LSDRaster Elevation
         }
         else if (degs_new > 270 || degs_new < 90) {   //secondary component is North
     xo = 1-0.00001, yo = 1;
-    s_edge = abs(s_local*sin((2/PI) - theta));
+    //s_edge = abs(s_local*sin((2/PI) - theta));
     d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
     xi = xo, yi = 1- yo;
     dir = 4;
@@ -5489,7 +6204,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_RAW(LSDRaster Elevation
       else if (dir == 4) {
         if   (degs_new >= 180 && degs_new <= 360) { //secondary component is West
     xo = 0, yo = 0.00001;
-    s_edge = abs(s_local*sin((PI/2) - theta));
+    //s_edge = abs(s_local*sin((PI/2) - theta));
     d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
     xi = 1-xo, yi = yo;
     dir = 3;
@@ -5499,7 +6214,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_RAW(LSDRaster Elevation
         }
         else if (degs_new >= 0 && degs_new < 180) { //secondary component is East
     xo = 1, yo = 0.00001;
-    s_edge = abs(s_local*sin(theta));
+    //s_edge = abs(s_local*sin(theta));
     d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
     xi = 1-xo, yi = yo;
     dir = 1;
@@ -5534,7 +6249,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_RAW(LSDRaster Elevation
             degs = aspect[a][b];
       theta = rads[a][b];
       path[a][b] += 1;
-      s_local = slope[a][b];
+      //s_local = slope[a][b];
 
             length += sqrt((pow((xo-0.5),2) + pow((yo-0.5),2)));  //update length to cope with the 'jump' to the centre of the cell to restart the trace
 
@@ -5587,7 +6302,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_RAW(LSDRaster Elevation
       //collect slopes and totals weighted by path length
 
       length += d;
-      s_local = slope[a][b];
+      //s_local = slope[a][b];
 
           }
 
@@ -5596,7 +6311,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_RAW(LSDRaster Elevation
             degs = aspect[a][b];
       theta = rads[a][b];
       path[a][b] += 1;
-      s_local = slope[a][b];
+      //s_local = slope[a][b];
 
             a_2 = a;
             b_2 = b;
@@ -5651,7 +6366,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_RAW(LSDRaster Elevation
 
       //collect slopes and totals weighted by path length
       length += d;
-      s_local = slope[a][b];
+      //s_local = slope[a][b];
 
     }
 
@@ -5833,8 +6548,10 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_Profile(LSDRaster Eleva
   int count = 0;
 
   float PI = 3.14159265;
-  float degs, degs_old, degs_new, theta;
-  float s_local, s_edge;
+  float degs, degs_new, theta;
+  //float degs_old;
+  //float s_local;
+  //float s_edge;
   float xo, yo, xi, yi, temp_yo1, temp_yo2, temp_xo1, temp_xo2;
   bool skip_trace; //flag used to skip traces where no path to a stream can be found. Will only occur on noisy, raw topography
 
@@ -5933,9 +6650,9 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_Profile(LSDRaster Eleva
   path[a][b] += 1;
   east_vec[0] = easting[b];
   north_vec[0] = northing[a];
-  s_local = slope[a][b];
-        ZetaList.clear();
-        LengthList.clear();
+  //s_local = slope[a][b];
+  ZetaList.clear();
+  LengthList.clear();
 
   //test direction, calculate outlet coordinates and update indicies
   // easterly
@@ -5995,7 +6712,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_Profile(LSDRaster Eleva
 
   //collect slopes and totals weighted by path length
   length += d;
-  s_local = slope[a][b];
+  //s_local = slope[a][b];
 
   //continue trace until a stream node is encountered
   while (flag == true && a > 0 && a < NRows-1 && b > 0 && b < NCols-1) {   //added boudary checking to catch cells which flow off the  edge of the DEM tile.
@@ -6004,7 +6721,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_Profile(LSDRaster Eleva
 
     path[a][b] += 1;
 
-    degs_old = degs;
+    //degs_old = degs;
     degs_new = aspect[a][b];
     theta = rads[a][b];
           ++count;
@@ -6028,7 +6745,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_Profile(LSDRaster Eleva
       else if (dir == 3) temp_yo1 = -1;
       else if (dir == 4) temp_xo2 = -1;
 
-      s_local = slope[a][b];
+      //s_local = slope[a][b];
 
       if (temp_yo1 <= 1 && temp_yo1 > 0) {
         xo = 1, yo = temp_yo1;
@@ -6083,7 +6800,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_Profile(LSDRaster Eleva
       if (dir  == 1) {
         if (degs_new <= 90 || degs_new >= 270) { //secondary compenent of flow is north
     xo = 0.00001, yo = 1;
-    s_edge = abs(s_local*sin(theta));
+    //s_edge = abs(s_local*sin(theta));
     d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
     xi = xo, yi = 1-yo;
     dir = 4;
@@ -6093,7 +6810,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_Profile(LSDRaster Eleva
         }
         else if (degs_new > 90 && degs_new < 270) {  //secondary component is south
     xo = 0.00001, yo = 0;
-    s_edge = abs(s_local*sin((PI/2)-theta));
+    //s_edge = abs(s_local*sin((PI/2)-theta));
     d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
     xi = xo, yi = 1-yo;
     dir = 2;
@@ -6111,7 +6828,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_Profile(LSDRaster Eleva
       else if (dir == 2) {
         if   (degs_new >= 0 && degs_new <= 180) { //secondary component is East
     xo = 1, yo = 1-0.00001;
-    s_edge = abs(s_local*sin((2/PI)-theta));
+    //s_edge = abs(s_local*sin((2/PI)-theta));
     d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
     xi = 1-xo, yi = yo;
     dir = 1;
@@ -6121,7 +6838,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_Profile(LSDRaster Eleva
         }
         else if (degs_new > 180 && degs_new <= 360) {  //secondary component is West
     xo = 0, yo = 1-0.00001;
-    s_edge = abs(s_local*sin(theta));
+    //s_edge = abs(s_local*sin(theta));
     d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
     xi = 1-xo, yi = yo;
     dir = 3;
@@ -6139,7 +6856,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_Profile(LSDRaster Eleva
       else if (dir == 3) {
         if   (degs_new >= 90 && degs_new <= 270) {  //secondary component is South
     xo = 1-0.00001, yo = 0;
-    s_edge = abs(s_local*sin(theta));
+    //s_edge = abs(s_local*sin(theta));
     d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
     xi = xo, yi = 1-yo;
     dir = 2;
@@ -6149,7 +6866,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_Profile(LSDRaster Eleva
         }
         else if (degs_new > 270 || degs_new < 90) {   //secondary component is North
     xo = 1-0.00001, yo = 1;
-    s_edge = abs(s_local*sin((2/PI) - theta));
+    //s_edge = abs(s_local*sin((2/PI) - theta));
     d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
     xi = xo, yi = 1- yo;
     dir = 4;
@@ -6167,7 +6884,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_Profile(LSDRaster Eleva
       else if (dir == 4) {
         if   (degs_new >= 180 && degs_new <= 360) { //secondary component is West
     xo = 0, yo = 0.00001;
-    s_edge = abs(s_local*sin((PI/2) - theta));
+    //s_edge = abs(s_local*sin((PI/2) - theta));
     d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
     xi = 1-xo, yi = yo;
     dir = 3;
@@ -6177,7 +6894,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_Profile(LSDRaster Eleva
         }
         else if (degs_new >= 0 && degs_new < 180) { //secondary component is East
     xo = 1, yo = 0.00001;
-    s_edge = abs(s_local*sin(theta));
+    //s_edge = abs(s_local*sin(theta));
     d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
     xi = 1-xo, yi = yo;
     dir = 1;
@@ -6212,7 +6929,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_Profile(LSDRaster Eleva
             degs = aspect[a][b];
       theta = rads[a][b];
       path[a][b] += 1;
-      s_local = slope[a][b];
+      //s_local = slope[a][b];
 
             length += sqrt((pow((xo-0.5),2) + pow((yo-0.5),2)));  //update length to cope with the 'jump' to the centre of the cell to restart the trace
 
@@ -6265,7 +6982,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_Profile(LSDRaster Eleva
       //collect slopes and totals weighted by path length
 
       length += d;
-      s_local = slope[a][b];
+      //s_local = slope[a][b];
 
           }
 
@@ -6274,7 +6991,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_Profile(LSDRaster Eleva
             degs = aspect[a][b];
       theta = rads[a][b];
       path[a][b] += 1;
-      s_local = slope[a][b];
+      //s_local = slope[a][b];
 
             a_2 = a;
             b_2 = b;
@@ -6329,7 +7046,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_Profile(LSDRaster Eleva
 
       //collect slopes and totals weighted by path length
       length += d;
-      s_local = slope[a][b];
+      //s_local = slope[a][b];
 
     }
 
@@ -6448,15 +7165,15 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRouting_Profile(LSDRaster Eleva
 //
 // This function takes a starting node, gets all upslope nodes, and determines
 // if they are bounded by noddata. Those that are not are eliminated from the
-// list so that what remains are nodes that are fully within the 
+// list so that what remains are nodes that are fully within the
 //
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 vector<int> LSDFlowInfo::basin_edge_extractor(int outlet_node, LSDRaster& Topography)
 {
-  
+
   int n_nodes = (RowIndex.size());
   int i,j;
-  
+
   vector<int> upslope_nodes;
   if (outlet_node < n_nodes)
   {
@@ -6477,7 +7194,7 @@ vector<int> LSDFlowInfo::basin_edge_extractor(int outlet_node, LSDRaster& Topogr
   cout << "The number of nodes in this basin is: " <<  upslope_nodes.size() << endl;
   for (int q = 0; q < int(upslope_nodes.size()); ++q)
   {
-    
+
     retrieve_current_row_and_col(upslope_nodes[q], i, j);
     BasinData[i][j] = upslope_nodes[q];
   }
@@ -6486,18 +7203,18 @@ vector<int> LSDFlowInfo::basin_edge_extractor(int outlet_node, LSDRaster& Topogr
   int NDVCount;
   for (int q = 0; q < int(upslope_nodes.size()); ++q)
   {
-    
+
     retrieve_current_row_and_col(upslope_nodes[q], i, j);
     NDVCount = 0;
-      
+
     if (i == 0 || j == 0 || i == NRows-1 || j == NRows-1)
     {
       // We are not going to worry about corners since anything
-      // with NDVCount > 1 is classed as a potential boundary. 
+      // with NDVCount > 1 is classed as a potential boundary.
       NDVCount = 3;
     }
     else
-    {     
+    {
       //count border cells that are NDV
       if (BasinData[i-1][j-1] == NoDataValue){ ++NDVCount; }
       if (BasinData[i][j-1] == NoDataValue){ ++NDVCount; }
@@ -6513,7 +7230,7 @@ vector<int> LSDFlowInfo::basin_edge_extractor(int outlet_node, LSDRaster& Topogr
       perim.push_back(upslope_nodes[q]);
     }
   }
-  
+
   return perim;
 }
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -6605,15 +7322,15 @@ LSDIndexRaster LSDFlowInfo::find_cells_influenced_by_nodata(LSDIndexRaster& Bord
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 bool LSDFlowInfo::is_upstream_influenced_by_nodata(int nodeindex, LSDRaster& test_raster)
 {
-  // get all the upslope nodes of this node. 
+  // get all the upslope nodes of this node.
   vector<int> upslope_node_list = get_upslope_nodes(nodeindex);
-  
+
   int i,j;
-  
+
   bool flag = false;
   float raster_value;
   float NDV = test_raster.get_NoDataValue();
-  
+
   // now loop through all these nodes, seeing if any of them is bounded by nodata
   for (int node = 0; node < int(upslope_node_list.size()); node++)
   {
@@ -6637,7 +7354,7 @@ bool LSDFlowInfo::is_upstream_influenced_by_nodata(int nodeindex, LSDRaster& tes
             flag = true;
             return flag;
           }
-          
+
         }
       }
     }
@@ -6729,7 +7446,8 @@ void LSDFlowInfo::D_Inf_single_trace_to_channel(LSDRaster Elevation, int start_n
   int count = 0;
   //   int DivergentCountFlag = 0; //Flag used to count the number of divergent cells encountered in a trace
   float PI = 3.14159265;
-  float degs, degs_old, degs_new, theta;
+  float degs, degs_new, theta;
+  //float degs_old;
   //   float s_local, s_edge;
   float xo, yo, xi, yi, temp_yo1, temp_yo2, temp_xo1, temp_xo2;
   //   bool skip_trace; //flag used to skip traces where no path to a stream can be found. Will only occur on noisy, raw topography
@@ -6881,7 +7599,7 @@ void LSDFlowInfo::D_Inf_single_trace_to_channel(LSDRaster Elevation, int start_n
 
     path[a][b] += 1;
 
-    degs_old = degs;
+    //degs_old = degs;
     degs_new = aspect[a][b];
     theta = BearingToRad(aspect[a][b]);
     ++count;
@@ -7440,7 +8158,8 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRoutingBedrock(LSDRaster Elevat
   int PlanarCountFlag;
   float PI = 3.14159265;
   float degs, degs_new, theta;
-  float s_local, s_edge;
+  //float s_local;
+  //float s_edge;
   float xo, yo, xi, yi, temp_yo1, temp_yo2, temp_xo1, temp_xo2;
   bool skip_trace; //flag used to skip traces where no path to a stream can be found. Will only occur on noisy, raw topography
   float E_Star = 0;
@@ -7549,7 +8268,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRoutingBedrock(LSDRaster Elevat
   path[a][b] += 1;
   east_vec[0] = easting[b];
   north_vec[0] = northing[a];
-  s_local = slope[a][b];
+  //s_local = slope[a][b];
 
   //test direction, calculate outlet coordinates and update indicies
   // easterly
@@ -7609,7 +8328,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRoutingBedrock(LSDRaster Elevat
 
   //collect slopes and totals weighted by path length
   length += d;
-  s_local = slope[a][b];
+  //s_local = slope[a][b];
   rock_exposure += rock[a][b]*d;
 
   //continue trace until a stream node is encountered
@@ -7640,7 +8359,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRoutingBedrock(LSDRaster Elevat
       else if (dir == 3) temp_yo1 = -1;
       else if (dir == 4) temp_xo2 = -1;
 
-      s_local = slope[a][b];
+      //s_local = slope[a][b];
 
       if (temp_yo1 <= 1 && temp_yo1 > 0) {
         xo = 1, yo = temp_yo1;
@@ -7695,7 +8414,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRoutingBedrock(LSDRaster Elevat
       if (dir  == 1) {
         if (degs_new <= 90 || degs_new >= 270) { //secondary compenent of flow is north
     xo = 0.00001, yo = 1;
-    s_edge = abs(s_local*sin(theta));
+    //s_edge = abs(s_local*sin(theta));
     d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
     xi = xo, yi = 1-yo;
     dir = 4;
@@ -7705,7 +8424,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRoutingBedrock(LSDRaster Elevat
         }
         else if (degs_new > 90 && degs_new < 270) {  //secondary component is south
     xo = 0.00001, yo = 0;
-    s_edge = abs(s_local*sin((PI/2)-theta));
+    //s_edge = abs(s_local*sin((PI/2)-theta));
     d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
     xi = xo, yi = 1-yo;
     dir = 2;
@@ -7723,7 +8442,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRoutingBedrock(LSDRaster Elevat
       else if (dir == 2) {
         if   (degs_new >= 0 && degs_new <= 180) { //secondary component is East
     xo = 1, yo = 1-0.00001;
-    s_edge = abs(s_local*sin((2/PI)-theta));
+    //s_edge = abs(s_local*sin((2/PI)-theta));
     d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
     xi = 1-xo, yi = yo;
     dir = 1;
@@ -7733,7 +8452,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRoutingBedrock(LSDRaster Elevat
         }
         else if (degs_new > 180 && degs_new <= 360) {  //secondary component is West
     xo = 0, yo = 1-0.00001;
-    s_edge = abs(s_local*sin(theta));
+    //s_edge = abs(s_local*sin(theta));
     d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
     xi = 1-xo, yi = yo;
     dir = 3;
@@ -7751,7 +8470,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRoutingBedrock(LSDRaster Elevat
       else if (dir == 3) {
         if   (degs_new >= 90 && degs_new <= 270) {  //secondary component is South
     xo = 1-0.00001, yo = 0;
-    s_edge = abs(s_local*sin(theta));
+    //s_edge = abs(s_local*sin(theta));
     d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
     xi = xo, yi = 1-yo;
     dir = 2;
@@ -7761,7 +8480,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRoutingBedrock(LSDRaster Elevat
         }
         else if (degs_new > 270 || degs_new < 90) {   //secondary component is North
     xo = 1-0.00001, yo = 1;
-    s_edge = abs(s_local*sin((2/PI) - theta));
+    //s_edge = abs(s_local*sin((2/PI) - theta));
     d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
     xi = xo, yi = 1- yo;
     dir = 4;
@@ -7779,7 +8498,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRoutingBedrock(LSDRaster Elevat
       else if (dir == 4) {
         if   (degs_new >= 180 && degs_new <= 360) { //secondary component is West
     xo = 0, yo = 0.00001;
-    s_edge = abs(s_local*sin((PI/2) - theta));
+    //s_edge = abs(s_local*sin((PI/2) - theta));
     d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
     xi = 1-xo, yi = yo;
     dir = 3;
@@ -7789,7 +8508,7 @@ vector< Array2D<float> > LSDFlowInfo::HilltopFlowRoutingBedrock(LSDRaster Elevat
         }
         else if (degs_new >= 0 && degs_new < 180) { //secondary component is East
     xo = 1, yo = 0.00001;
-    s_edge = abs(s_local*sin(theta));
+    //s_edge = abs(s_local*sin(theta));
     d = sqrt((pow((xo-xi),2) + pow((yo-yi),2)));
     xi = 1-xo, yi = yo;
     dir = 1;
@@ -8091,16 +8810,18 @@ int LSDFlowInfo::get_downslope_node_after_fixed_visited_nodes(int source_node,
       }
 
       // see if we have collected enough nodes to visit
-      if (n_visited >= n_nodes_to_visit)
+      if (n_visited >= n_nodes_to_visit && n_nodes_to_visit != -9999)
       {
         Am_I_at_the_bottom_of_the_channel = true;
         bottom_node = receiver_node;
       }
     }
+    
     current_node = receiver_node;
   }
   return bottom_node;
 }
+
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 // This function gets the flow length between two nodes.
@@ -8111,11 +8832,7 @@ float LSDFlowInfo::get_flow_length_between_nodes(int UpstreamNode, int Downstrea
 	float length = 0;
 	float root_2 = 1.4142135623;
 
-  if (UpstreamNode == DownstreamNode)
-  {
-    cout << "You've picked the same node! Flow Length is 0." << endl;
-  }
-  else
+  if (UpstreamNode != DownstreamNode)
   {
   	int upstream_test = is_node_upstream(DownstreamNode, UpstreamNode);
   	if (upstream_test != 1)
@@ -8177,6 +8894,7 @@ float LSDFlowInfo::get_Euclidian_distance(int node_A, int node_B)
 
   return dist;
 }
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 // Snap a given point to the nearest hilltop pixel, within a search radius.
@@ -8272,6 +8990,380 @@ void LSDFlowInfo::snap_to_hilltops(vector<float> x_locs, vector<float> y_locs, i
     }
   }
 }
+
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+// Get slope between nodes
+// FJC 03/05/18
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+float LSDFlowInfo::get_slope_between_nodes(int upslope_node, int downslope_node, LSDRaster& Elevation)
+{
+  float slope = NoDataValue;
+  int upslope_row, upslope_col, downslope_row, downslope_col;
+  bool us_node = is_node_upstream(downslope_node, upslope_node);
+  if (us_node == false)
+  {
+    cout << "Warning! Your downslope node is not downslope of the upslope one. Returning NDV." << endl;
+  }
+  else
+  {
+    retrieve_current_row_and_col(upslope_node, upslope_row, upslope_col);
+    retrieve_current_row_and_col(downslope_node, downslope_row, downslope_col);
+    float upslope_elev = Elevation.get_data_element(upslope_row, upslope_col);
+    float downslope_elev = Elevation.get_data_element(downslope_row, downslope_col);
+    float FlowDist = get_flow_length_between_nodes(upslope_node, downslope_node);
+
+    slope = (upslope_elev - downslope_elev)/FlowDist;
+  }
+  return slope;
+}
+
+
+
+/// @brief Structure used to sort vectors of flow
+struct vector_PQ
+{
+  float base_elevation;
+  vector<int> nodes;
+};
+
+bool operator>( const vector_PQ& lhs, const vector_PQ& rhs )
+{
+  return lhs.base_elevation > rhs.base_elevation;
+}
+bool operator<( const vector_PQ& lhs, const vector_PQ& rhs )
+{
+  return lhs.base_elevation < rhs.base_elevation;
+}
+
+
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+// Get separated vector of flow for the entire landscape
+// BG 10/2018
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+vector< vector<int> > LSDFlowInfo::get_vectors_of_flow(LSDRaster& topo)
+{
+  vector<int> No_donors ;
+  vector<vector<int> > out_vector;
+  priority_queue< vector_PQ, vector<vector_PQ>, greater<vector_PQ> > processing_PQ;
+
+  // Preparing a raster to check who has been processed
+  Array2D<short> processed(NRows,NCols,NoDataValue);
+  for(int i=0;i<NRows;i++)
+  {
+    for(int j=0;j<NCols;j++)
+    {
+      if(topo.get_data_element(i,j)!=NoDataValue)
+      {
+        processed[i][j] = 0;
+      }
+    }
+  }
+  // ofstream  data_out;
+  // string filename = "/home/s1675537/PhD/LSDTopoData/knickpoint/test_location_paper/Smugglers_SC/Response_To_WS/TESTAGUL.csv";
+  // data_out.open(filename.c_str());
+  // data_out << "row,col,x,y,z" << endl;
+  // data_out.precision(9);
+  for(int i=0; i<int(RowIndex.size());i++)
+  {
+    int tRow = RowIndex[i];
+    int tCol = ColIndex[i];
+    int NDonors_here = NDonorsVector[i];
+    int this_node = int(i);
+
+    if(NDonors_here == 0)
+    {
+      float x,y;
+      get_x_and_y_locations(tRow,tCol,x,y);
+      // data_out << tRow << ",";
+      // data_out << tCol << ",";
+      // data_out << x << ",";
+      // data_out << y << ",";
+      // data_out << topo.get_data_element(tRow,tCol) << endl;
+      No_donors.push_back(this_node);
+    }
+
+  }
+  // data_out.close();
+  int cpt = 1, ma = No_donors.size();
+  for(vector<int>::iterator olga=No_donors.begin();olga!=No_donors.end(); olga++)
+  {
+    cout << "Processing #" << cpt <<"/"<<ma << "\r";
+    cpt++;
+    int this_node = *olga;
+    vector<int> this_vector;
+    this_vector.push_back(this_node);
+    int row,col;
+    retrieve_current_row_and_col(this_node,row,col);
+    processed[row][col] = 1;
+    bool proc = true;
+    do
+    {
+      int this_receiver;
+      retrieve_receiver_information(this_node,this_receiver,row,col);
+
+      if(this_node != this_receiver && processed[row][col] != 1)
+      {
+        processed[row][col] = 1;
+        this_vector.push_back(this_receiver);
+        this_node = this_receiver;
+      }
+      else
+      {
+        reverse(this_vector.begin(),this_vector.end());
+        out_vector.push_back(this_vector);
+        proc = false;
+        this_vector.clear();
+      }
+    }
+    while(proc);
+
+
+  }
+  cout << endl;
+  // OK now I am getting all the vector in order
+  // the iterator is just the name of a book in front of me
+  cout << "I got the flow vectors, I am now sorting it per base elevation to make sure it is processing first the bases" << endl;
+  for(vector<vector<int> >::iterator Introduction_to_Differentail_Equations_by_Mark_h_Holmes = out_vector.begin(); Introduction_to_Differentail_Equations_by_Mark_h_Holmes != out_vector.end(); Introduction_to_Differentail_Equations_by_Mark_h_Holmes++)
+  {
+    vector<int> this_vector = *Introduction_to_Differentail_Equations_by_Mark_h_Holmes;
+    vector_PQ this_inclusion;
+    int row,col;
+    int this_node = this_vector[0];
+    retrieve_current_row_and_col(this_node,row,col);
+    float this_elevation = topo.get_data_element(row,col);
+    this_inclusion.base_elevation = this_elevation;
+    this_inclusion.nodes = this_vector;
+    processing_PQ.push(this_inclusion);
+  }
+  out_vector.clear();
+
+  while(processing_PQ.size()>0)
+  {
+    vector_PQ this_inclusion;
+    this_inclusion = processing_PQ.top();
+    processing_PQ.pop();
+    vector<int> this_vector =  this_inclusion.nodes;
+    out_vector.push_back(this_vector);
+  }
+
+
+  return out_vector;
+}
+
+
+// Alright, for the following operation, I will need to create a structure:
+// I want to sort my base-level nodes per ascending order to make sure I multithread the largest basins first
+struct base_level_node_sorter
+{
+  int Node_ID;
+  int n_donors_to_that_node;
+};
+//Overload the less than and greater than operators to consider Zeta data only
+//N.B. Fill only needs greater than but less than useful for mdflow routing
+//(I've coded this but not yet added to LSDRaster, it's only faster than presorting
+//when applied to pretty large datasets).
+bool operator>( const base_level_node_sorter& lhs, const base_level_node_sorter& rhs )
+{
+  return lhs.n_donors_to_that_node > rhs.n_donors_to_that_node;
+}
+bool operator<( const base_level_node_sorter& lhs, const base_level_node_sorter& rhs )
+{
+  return lhs.n_donors_to_that_node < rhs.n_donors_to_that_node;
+}
+
+// This function attemps to return a user friendly vectors of different element calculated in the FlowInfo object
+// If you question the relevance of that function, try to get the stack vector of node from Braun and Willett
+// just reading the comments of that file.
+// the returned map has the several string keys:
+// "stack order" -> the stack order sense Braun and willett, per node index
+// ...
+// B.G. 14/04/2019
+map<string, vector< vector<int> > > LSDFlowInfo::get_map_of_vectors()
+{
+
+  // I first, I want the base levels again
+  priority_queue< base_level_node_sorter, vector<base_level_node_sorter>, less<base_level_node_sorter> > PriorityQueue;
+
+  vector<int> base_levels;
+  int check_my_vectors = 0;
+  for(size_t i=0; i<ReceiverVector.size(); i++)
+  {
+    check_my_vectors++;
+    // checking if this is a baselevel AND has some receivers
+    if(int(i) == ReceiverVector[i] && retrieve_ndonors_to_node(i) > 1)
+    {
+      base_level_node_sorter BLNS;BLNS.Node_ID = int(i);BLNS.n_donors_to_that_node = retrieve_ndonors_to_node(i);
+      PriorityQueue.push( BLNS);
+    }
+  }
+
+  while(PriorityQueue.size()>0)
+  {
+    base_levels.push_back(PriorityQueue.top().Node_ID);
+    PriorityQueue.pop();
+  }
+
+  // cout << "Gougne: " << base_levels.size() << " || vs: " << check_my_vectors << endl;
+
+  vector<vector<int> > nodes_per_basins(base_levels.size()), inverted_nodes_per_basins(base_levels.size()), n_row(base_levels.size()), n_col(base_levels.size()), i_row(base_levels.size()), i_col(base_levels.size());
+  for(size_t i=0;i<base_levels.size();i++)
+  {
+    // First get the stack_order of that base_level
+    vector<int> this_vec = get_upslope_nodes(base_levels[i]);
+
+    if(this_vec.size() > 1)
+    {
+      this_vec.insert(this_vec.begin(),base_levels[i]); // Do not forget dat first node!!!
+      nodes_per_basins.push_back(this_vec);
+      vector<int> rev_vec;
+      for(int j= int(this_vec.size()-1); j>=0; j--)
+      {
+        int new_val = this_vec[j];
+        rev_vec.push_back(new_val);
+      }
+
+      // reverse(rev_vec.begin(),rev_vec.end());
+      inverted_nodes_per_basins.push_back(rev_vec);
+      // Now getting the row and col
+      vector<int> this_n_row, this_n_col, this_i_row, this_i_col;
+      for(size_t j = 0; j< this_vec.size(); j++)
+      {
+        int this_node = this_vec[j];
+        int i_node = rev_vec[j];
+
+        int row,col;
+        retrieve_current_row_and_col(this_node,row,col);
+        this_n_row.push_back(row);
+        this_n_col.push_back(col);
+
+        retrieve_current_row_and_col(i_node,row,col);
+        this_i_row.push_back(row);
+        this_i_col.push_back(col);
+      }
+
+      n_row.push_back(this_n_row);
+      n_col.push_back(this_n_col);
+      i_row.push_back(this_i_row);
+      i_col.push_back(this_i_col);
+    }
+
+  }
+
+
+  // formatting the output
+  map<string, vector< vector<int> > > output;
+
+  // adding a tracer
+  vector<vector<int> > tracer;
+  int cpt = 0;
+  for(size_t i = 0; i<size_t(nodes_per_basins.size()); i++ )
+  {
+    vector<int> goris2;
+    for(size_t j=0; j<nodes_per_basins[i].size();j++)
+      {
+        goris2.push_back(cpt);
+        cpt ++;
+      }
+      tracer.push_back(goris2);
+  }
+
+  output["stack_order"] = nodes_per_basins;
+  output["inverted_stack_order"] = inverted_nodes_per_basins;
+  output["rows"] = n_row;
+  output["cols"] = n_col;
+  output["inverted_rows"] = i_row;
+  output["inverted_cols"] = i_col;
+  output["tracer"] = tracer;
+
+  // DEBUGGING, KEEP FOR A BIT------------------------------------------------------------------------------------------------------------
+  // float goulg = 0;
+  // Array2D<float> checker(NRows,NCols,goulg);
+  // for(size_t i=0; i<i_row.size(); i++)
+  // {
+  //   for(size_t j=0; j<i_row[i].size() ; j++)
+  //   {
+  //     int row,col;
+  //     row = i_row[i][j];
+  //     col = i_col[i][j];
+  //     checker[row][col] = 1;
+  //   }
+  // }
+
+  // // Done
+  // int cpt2 = 0;
+  // for(size_t i=0;i<NRows;i++)
+  // {
+  //   for(size_t j=0;j<NCols;j++)
+  //   {
+  //     if(checker[i][j] == 0)
+  //       cpt2++;
+  //   }
+  // }
+
+  // cout << "DEBUG::ORERING::There are " << cpt2 << " 0s out of " << NRows*NCols  <<  endl;
+  // DEBUGGING, KEEP FOR A BIT------------------------------------------------------------------------------------------------------------
+
+
+  return output;
+
+}
+
+
+// This function returns a raster draining with all the nodes draining to an outlet.
+// rest is no data
+//B.G
+LSDRaster LSDFlowInfo::get_raster_draining_to_node(int node, LSDRaster& elevation_raster)
+{
+  // getting all the node indices draining to that point
+  vector<int> nodes_in_basin = this->get_upslope_nodes_include_outlet(node);
+
+  int min_row = std::numeric_limits<int>::max(); 
+  int max_row = std::numeric_limits<int>::min();
+  int min_col = std::numeric_limits<int>::max(); 
+  int max_col = std::numeric_limits<int>::min();
+
+  // first I am getting the min and max row
+  for(auto n:nodes_in_basin)
+  {
+
+    int this_row,this_col; this->retrieve_current_row_and_col(n,this_row,this_col);
+    if(this_row<min_row)
+      min_row = this_row;
+    else if(this_row > max_row)
+      max_row = this_row;
+    if(this_col<min_col)
+      min_col = this_col;
+    else if(this_col > max_col)
+      max_col = this_col;
+  }
+
+
+  // creating an empty raster
+  Array2D<float> this_raster_data(max_row - min_row + 1, max_col - min_col + 1, NoDataValue);
+
+  for(auto n:nodes_in_basin)
+  {
+    // getting row col of main raster
+    int global_row, global_col; this->retrieve_current_row_and_col(n,global_row,global_col);
+    int new_row = global_row - min_row;
+    int new_col =  global_col - min_col;
+
+    this_raster_data[new_row][new_col] = elevation_raster.get_data_element(global_row,global_col);
+  }
+
+
+  float new_XLL = XMinimum + min_col * DataResolution;
+  float new_YLL = YMinimum + (NRows - 1 - max_row) * DataResolution;
+
+  LSDRaster output(max_row - min_row + 1, max_col - min_col + 1, new_XLL, new_YLL,
+      DataResolution, NoDataValue, this_raster_data, GeoReferencingStrings);
+
+  return output;
+
+
+}
+
+  // map<string, vector<int> > burn_raster_to_
 
 
 #endif

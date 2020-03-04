@@ -65,6 +65,9 @@ using namespace TNT;
 #ifndef LSDParameterParser_HPP
 #define LSDParameterParser_HPP
 
+/// A function for dealing with initial ingestion of the parameter files
+vector<string> DriverIngestor(int nNumberofArgs,char *argv[]);
+
 /// @brief Object to perform flow routing.
 class LSDParameterParser
 {
@@ -124,6 +127,18 @@ class LSDParameterParser
                       map<string,int> default_map_i, map<string,bool> default_map_b,
                       map<string,string> default_map_s);
 
+    /// @brief This parses all of the defalt parameter maps
+    /// Overloaded to include doubles.
+    /// @param default_param_f a map of the default parameters, keys are string, values are floats
+    /// @param default_param_i a map of the default parameters, keys are string, values are int
+    /// @param default_param_b a map of the default parameters, keys are string, values are bool
+    /// @param default_param_s a map of the default parameters, keys are string, values are string
+    /// @author FJC
+    /// @date 20/11/17
+    void parse_all_parameters(map<string,float> default_map_f,
+                      map<string,int> default_map_i, map<string,bool> default_map_b,
+                      map<string,string> default_map_s, map<string,double> default_map_d);
+
 
     /// @brief This function takes a default map and converts it into the parameters
     ///  by comparing the keys to the parsed parameter file
@@ -152,6 +167,13 @@ class LSDParameterParser
     /// @author SMM
     /// @date 03/11/2016
     void parse_string_parameters(map<string,string> default_map);
+
+    /// @brief This function takes a default map and converts it into the parameters
+    ///  by comparing the keys to the parsed parameter file
+    /// @param default_param a map of the default parameters, keys are string, values are doubles
+    /// @author FJC
+    /// @date 20/11/2017
+    void parse_double_parameters(map<string,double> default_map);
 
     /// @brief This function takes a parameter from the string map and parses it
     ///  into a vector of strings
@@ -212,6 +234,20 @@ class LSDParameterParser
     map<string,bool> get_bool_parameters() const     { return bool_parameters; }
     /// @return the float parameters
     map<string,string> get_string_parameters() const     { return string_parameters; }
+    /// @return the double parameters
+    map<string,double> get_double_parameters() const     { return double_parameters; }
+
+    /// @brief set the read_fname parameter with a string
+    /// @param new_read_fname string containing the new read filename
+    ///@author MDH
+    ///@date 13/10/2017
+    void set_read_fname(string new_read_fname) { read_fname = new_read_fname; }
+
+    /// @brief set the read_fname parameter with a string
+    /// @param new_read_fname string containing the new read filename
+    ///@author MDH
+    ///@date 13/10/2017
+    void set_write_fname(string new_write_fname) { write_fname = new_write_fname; }
 
     /// @brief This checks to see if boundary condtions have been assigned and
     /// if not defaults to no flux boundaries
@@ -224,6 +260,14 @@ class LSDParameterParser
     /// @author SMM
     /// @date 02/11/2016
     void check_file_extensions_and_paths();
+
+
+    /// @brief A routine that checks to see if the filename has a path
+    ///  If it doesn't, adds the read path
+    /// @param this_string The string to check for the path
+    /// @author SMM
+    /// @date 10/10/2018
+    string check_for_path_and_add_read_path_if_required(string this_string);
 
     /// @brief this returns the string before the last dot in a string.
     /// so for example if you gave it paramfile.param it would return paramfile
@@ -245,13 +289,13 @@ class LSDParameterParser
     /// @author SMM
     /// @date 16/03/2017
     void print_parameters(string fname_prefix);
-    
+
     /// @brief This is used to update a parameter file within LSDTopoTools
-    ///  and is primarily intended to be used in spawning operations, 
+    ///  and is primarily intended to be used in spawning operations,
     ///  e.g. where you select a bunch of catchemetns and create driver
-    ///    functions for each one that can be run on different CPUs. 
+    ///    functions for each one that can be run on different CPUs.
     /// @param parameter_fname the name of the output parameter file
-    /// @param new_read_path the new path. 
+    /// @param new_read_path the new path.
     /// @param new_read_fname the new read filename (no extension!)
     /// @param new_write_path says what it does on the tin
     /// @param new_write_fname no extension for this file
@@ -280,7 +324,7 @@ class LSDParameterParser
     /// Path to which files will be written
     string write_path;
 
-    /// Path from which files will be written 
+    /// Path from which files will be written
     string read_path;
 
     /// Prefix of files to be written (i.e., no path, no extension)
@@ -291,16 +335,16 @@ class LSDParameterParser
 
     /// The prefix of the channelheads filename
     string CHeads_file;
-    
+
     /// The prefix of the baselevel junctions filename
     string BaselevelJunctions_file;
-    
+
     /// The prefix of the channel segments filename
     string ChannelSegments_file;
-    
+
     /// The prefix of the floodplain mask filename
     string Floodplain_file;
-    
+
     //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
     /// the four boundary conditions on the raster for the flow info object
     vector<string> boundary_conditions;
@@ -330,6 +374,9 @@ class LSDParameterParser
 
     /// This holds bool parameters
     map<string,bool> bool_parameters;
+
+    /// This holds double parameters
+    map<string,double> double_parameters;
 
   private:
     void create();

@@ -66,6 +66,84 @@ using namespace TNT;
 #ifndef LSDParameterParser_CPP
 #define LSDParameterParser_CPP
 
+// This basic function is not part of the parameter parser object
+// but instead is the function called at the beginning of any
+// LSDTT driver call
+vector<string> DriverIngestor(int nNumberofArgs,char *argv[])
+{
+  cout << "=========================================================" << endl;
+  cout << "|| You have called an LSDTopoTools program.            ||" << endl;
+  cout << "|| Prepare to explore topographic data!                ||" << endl;
+  cout << "|| You can read the documentation at:                  ||" << endl;
+  cout << "=========================================================" << endl;
+
+  string path_name = ".";
+  string file_name = "LSDTT_parameters.driver";
+
+  //Test for correct input arguments
+  if (nNumberofArgs == 1)
+  {
+    cout << "You have not given me any arguments. I am going to look" << endl;
+    cout << "in this directory for a file with the extension .driver" << endl;
+    cout << "I'll use the first one I find (in alphabetical ordering)." << endl;
+    cout << "If I don't find one I am going to exit." << endl;
+  }
+  if (nNumberofArgs == 2)
+  {
+    cout << "I have one argument. I don't know if this is a directory path" << endl;
+    cout << "or a driver filename. I am going to assume it is a directory path" << endl;
+    cout << "if it containes the character . or /" << endl;
+
+    string temp_arg = argv[1];
+    string s_dot = ".";
+    string sl_dot = "/";
+
+    bool this_is_a_path = false;
+    bool path_find = false;
+    if (temp_arg.find(s_dot) != std::string::npos)
+    {
+      path_find = true;
+    }
+    if (temp_arg.find(sl_dot) != std::string::npos)
+    {
+      path_find = true;
+    }
+
+    if (this_is_a_path)
+    {
+      path_name = temp_arg;
+    }
+    else
+    {
+      file_name = temp_arg;
+    }
+  }
+  //Test for correct input arguments
+  if (nNumberofArgs==3)
+  {
+    cout << "I am reading the two arguments you gave me as the path name and the file name." << endl;
+    path_name = argv[1];
+    file_name = argv[2];
+  }
+  if (nNumberofArgs>=3)
+  {
+    cout << "You have provided more than two arguments. " << endl;
+    cout << "I only expect 2. I am going to assume you meant" << endl;
+    cout << "to give me the first two." << endl;
+    path_name = argv[1];
+    file_name = argv[2];
+
+  }
+
+  vector<string> path_and_file;
+  path_and_file.push_back(path_name);
+  path_and_file.push_back(file_name);
+
+  return path_and_file;
+
+}
+
+
 
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 // Create functions
@@ -104,7 +182,6 @@ void LSDParameterParser::create(string PathName, string FileName)
   parse_file_IO();
 
   // make sure the files are okay
-  parse_file_IO();
   check_boundary_conditions();
   check_file_extensions_and_paths();
 }
@@ -245,6 +322,9 @@ void LSDParameterParser::LSDPP_parse_file_into_parameter_map(string FullName)
 // This uses the parameter map to get file input and output
 void LSDParameterParser::parse_file_IO()
 {
+  cout << endl << endl << endl << "----------------------" << endl;
+  cout << "Parsing the file I/O" << endl;
+
   bool found_cheads = false;
   if(parameter_map.find("dem read extension") != parameter_map.end())
   {
@@ -278,6 +358,12 @@ void LSDParameterParser::parse_file_IO()
     read_path = RemoveControlCharactersFromEndOfString(read_path);
     //cout << "Got the write name, it is: "  << write_fname << endl;
   }
+  else
+  {
+    cout << "I did not find a read path so I am assuming the file is in this current directory." << endl;
+    read_path = "./";
+  }
+
   if(parameter_map.find("read fname") != parameter_map.end())
   {
     read_fname = parameter_map["read fname"];
@@ -285,8 +371,36 @@ void LSDParameterParser::parse_file_IO()
     read_fname = RemoveControlCharactersFromEndOfString(read_fname);
     //cout << "Got the write name, it is: "  << write_fname << endl;
   }
+
+  if(parameter_map.find("CHeads_file") != parameter_map.end())
+  {
+    cout << endl << endl << endl;
+    cout << "===========================" << endl;
+    cout << "I have a channel heads file using the parameter string CHeads_file." << endl;
+    cout << "If you have another parameter channel heads fname it will overwrite this parameter." << endl;
+    cout << "This option is used for backwards compatibility but the channel heads fname is preferred." << endl;
+    cout << "===========================" << endl;
+    cout << endl << endl << endl;
+
+    CHeads_file = parameter_map["CHeads_file"];
+    // get rid of any control characters from the end (if param file was made in DOS)
+    CHeads_file = RemoveControlCharactersFromEndOfString(CHeads_file);
+    cout << "Got the channel heads name, it is: " << CHeads_file << endl;
+    if(found_cheads)
+    {
+      cout << "Warning, channel head file is being overwritten--you have it twice in parameter file." << endl;
+    }
+    found_cheads = true;
+  }
+  else
+  {
+    cout << "I didn't find CHeads_file in the parameter map" << endl;
+  }
+
+
   if(parameter_map.find("channel heads fname") != parameter_map.end())
   {
+    cout << "I found a channel heads fname which is" << parameter_map["channel heads fname"] << endl;
     CHeads_file = parameter_map["channel heads fname"];
     // get rid of any control characters from the end (if param file was made in DOS)
     CHeads_file = RemoveControlCharactersFromEndOfString(CHeads_file);
@@ -299,8 +413,19 @@ void LSDParameterParser::parse_file_IO()
   }
   else
   {
-    CHeads_file = "NULL";
+    if(found_cheads == false)
+    {
+      CHeads_file = "NULL";
+    }
+    else
+    {
+      cout << "I didn't find a channel heads fname but I have a previous channel heads from the CHeads_file" << endl;
+      cout << "I will use that. It is: " << CHeads_file << endl;
+    }
   }
+
+
+
   if(parameter_map.find("baselevel junctions fname") != parameter_map.end())
   {
     BaselevelJunctions_file = parameter_map["baselevel junctions fname"];
@@ -366,6 +491,23 @@ void LSDParameterParser::parse_all_parameters(map<string,float> default_map_f,
   parse_int_parameters(default_map_i);
   parse_bool_parameters(default_map_b);
   parse_string_parameters(default_map_s);
+
+}
+
+//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+// This parses all the default parameter maps.
+//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+void LSDParameterParser::parse_all_parameters(map<string,float> default_map_f,
+                      map<string,int> default_map_i, map<string,bool> default_map_b,
+                      map<string,string> default_map_s,
+                      map<string,double> default_map_d)
+{
+  parse_float_parameters(default_map_f);
+  parse_int_parameters(default_map_i);
+  parse_bool_parameters(default_map_b);
+  parse_string_parameters(default_map_s);
+  parse_double_parameters(default_map_d);
+
 }
 
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -398,6 +540,42 @@ void LSDParameterParser::parse_float_parameters(map<string,float> default_map)
     else  // the key is not in the parsed parameters. Use the default.
     {
       float_parameters[these_keys[i]] = default_map[these_keys[i]];
+      defaults_used_map[these_keys[i]] = dtoa(default_map[these_keys[i]]);
+
+    }
+
+  }
+}
+
+//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+// Parse double parameters (for coords) FJC 20/11/17
+//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+void LSDParameterParser::parse_double_parameters(map<string,double> default_map)
+{
+  // the idea is to look through the default map, getting the keys, and then
+  // looking for the keys in the parameter maps
+  vector<string> these_keys = extract_keys(default_map);
+
+  // loop through the keys
+  int n_keys = int(these_keys.size());
+  for(int i = 0; i<n_keys; i++)
+  {
+    cout << "Key is: " << these_keys[i] << endl;
+
+    // If the key is contained in the parsed parameters, use the parsed parameter
+    if(parameter_map.find(these_keys[i]) != parameter_map.end())
+    {
+      cout << "Found key " << these_keys[i];
+
+      // convert the value to float
+      double_parameters[these_keys[i]] = atof(parameter_map[these_keys[i]].c_str());
+      parameters_read_map[these_keys[i]] = parameter_map[these_keys[i]];
+      cout << " it is: " << parameter_map[these_keys[i]] << " check: " << double_parameters[these_keys[i]] << endl;
+
+    }
+    else  // the key is not in the parsed parameters. Use the default.
+    {
+      double_parameters[these_keys[i]] = default_map[these_keys[i]];
       defaults_used_map[these_keys[i]] = dtoa(default_map[these_keys[i]]);
 
     }
@@ -703,6 +881,40 @@ void LSDParameterParser::check_file_extensions_and_paths()
 }
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 
+
+//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+// This function checks filenames to see if they include a path. 
+// If not it add the read path
+//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+string LSDParameterParser::check_for_path_and_add_read_path_if_required(string this_string)
+{
+  string sl_dot = "/";
+  string new_string;
+  
+  cout << "The string to check is: " << this_string << endl;
+  if (this_string == "NULL" || this_string == "null" || this_string == "Null")
+  {
+    new_string = "NULL";
+  }
+  else
+  {
+    if (this_string.find(sl_dot) != std::string::npos)
+    {
+      cout << "This filename includes a path. I am not going to modify it." << endl;
+      new_string = this_string;
+    } 
+    else
+    {
+      cout << "This finlename doesn't have a path. I am adding the read path." << endl;
+      new_string = read_path+this_string;
+      cout << "The new filename is: " << new_string << endl;
+    }
+  } 
+
+  return new_string;
+
+}
+
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 // This function strips the text after the final dot in a string
 //-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -871,7 +1083,6 @@ void LSDParameterParser::replace_and_print_parameter_file(string parameter_fname
       params_out << these_keys[i] << ": " << defaults_used_map[these_keys[i]]  << endl;
     }
   }
-
 }
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 

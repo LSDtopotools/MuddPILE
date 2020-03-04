@@ -78,6 +78,7 @@
 #include "LSDChannel.hpp"
 #include "LSDIndexChannel.hpp"
 #include "LSDMostLikelyPartitionsFinder.hpp"
+#include "LSDStatsTools.hpp"
 using namespace std;
 using namespace TNT;
 
@@ -870,7 +871,7 @@ void LSDChannel::find_most_likeley_segments(int minimum_segment_length, float si
 
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 // this function finds the best fit m/n ratio
-//
+// THIS DOES NOT SEEM TO DO ANYTHING SMM 11/2017
 // SMM 2013
 //
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -899,9 +900,10 @@ void LSDChannel::find_best_fit_m_over_n_with_segments(int n_movern, float d_move
   vector<float> best_r2_vec;
   vector<float> best_DW_vec;
   vector<float> best_fitted_y;
-  int best_n_data_nodes;
-  int best_this_n_segments;
-  float best_this_MLE, best_this_AIC, best_this_AICc;
+  //int best_n_data_nodes;
+  //int best_this_n_segments;
+  //float best_this_MLE;
+  //float best_this_AIC, best_this_AICc;
   vector<int> best_these_segment_lengths;
   vector<float> best_chi_thinned;
   vector<float> best_elev_thinned;
@@ -909,7 +911,7 @@ void LSDChannel::find_best_fit_m_over_n_with_segments(int n_movern, float d_move
   vector<int> best_node_ref_thinned;
 
   float min_AICc = 9999;
-  float best_movern = start_movern;
+  //float best_movern = start_movern;
   float m_over_n;
   for(int i = 0; i<n_movern; i++)
   {
@@ -936,14 +938,14 @@ void LSDChannel::find_best_fit_m_over_n_with_segments(int n_movern, float d_move
   best_elev_fitted = elev_fitted;
   best_node_ref_thinned = node_ref_thinned;
   best_these_segment_lengths = these_segment_lengths;
-  best_this_MLE = this_MLE;
-  best_this_n_segments =  this_n_segments;
-  best_n_data_nodes =  n_data_nodes;
-  best_this_AIC = this_AIC;
-  best_this_AICc = this_AICc;
+  //best_this_MLE = this_MLE;
+  //best_this_n_segments =  this_n_segments;
+  //best_n_data_nodes =  n_data_nodes;
+  //best_this_AIC = this_AIC;
+  //best_this_AICc = this_AICc;
 
   min_AICc = this_AICc;
-  best_movern = m_over_n;
+  //best_movern = m_over_n;
 
   //cout << "best AICc: " << this_AICc << " and m_over_n: " << best_movern << endl;
       }
@@ -1107,6 +1109,63 @@ void LSDChannel::write_channel_to_csv(string path, string filename, LSDRaster& f
              << Elevation[node] <<"," << DrainageArea[node] <<","<<Chi[node] << endl;
   }
   chan_out.close();
+}
+
+//----------------------------------------------------------------------------------------//
+// calculate slopes along the channel using linear regression
+// FJC 19/06/19
+// completely forgot how to code in c++ so this is probably awful
+//----------------------------------------------------------------------------------------//
+vector<float> LSDChannel::calculate_channel_slopes(int window_size, LSDRaster& flow_distance)
+{
+  vector<float> channel_slopes;
+  int NNodes = NodeSequence.size();
+
+  // get flow distances along the channel
+  vector<float> flow_distances;
+  int this_row, this_col;
+  float this_dist;
+  for (int i = 0; i < NNodes; i++)
+  {
+    this_row = RowSequence[i];
+    this_col = ColSequence[i];
+    this_dist = flow_distance.get_data_element(this_row,this_col);
+    flow_distances.push_back(this_dist);
+  }
+  //cout << "Got flow distances" << endl;
+
+  int slicer = (window_size - 1)/2;
+
+  for (int i = 0; i < NNodes; i++)
+  {
+    int start_idx = i - slicer;
+    if (start_idx < 0) start_idx = 0;
+
+    int end_idx = i+slicer;
+    if (end_idx >= NNodes) end_idx = NNodes-1;
+    //cout << "start idx: " << start_idx << " end idx: " << end_idx << endl;
+    //cout << "n elevation nodes: " << Elevation.size() << endl;
+
+    // find the rows above and below relating to the window size. We use whatever nodes
+    // are available to not waste the data.
+    vector<float>::iterator first = Elevation.begin() + start_idx;
+    vector<float>::iterator last = Elevation.begin() + end_idx;
+    vector<float> these_elevs(first, last);
+    //cout << "Got elev vector" << endl;
+
+    first = flow_distances.begin() + start_idx;
+    last = flow_distances.begin() + end_idx;
+    vector<float> these_dists(first,last);
+    //cout << "Got the vector slices" << endl;
+    // now regress this slice
+    vector<float> residuals;
+    vector<float> regress = simple_linear_regression(these_dists, these_elevs, residuals);
+    float slope = regress[0];
+    //cout << "slope: " << slope << endl;
+    channel_slopes.push_back(abs(slope));
+  }
+
+  return channel_slopes;
 }
 
 

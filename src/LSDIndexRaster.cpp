@@ -427,7 +427,7 @@ void LSDIndexRaster::read_raster(string filename, string extension)
       {
         // the the rest of the lines
         int NChars = 5000; // need a big buffer beacause of the projection string
-        char thisline[NChars];
+        char* thisline = new char[NChars]; // char thisline[NChars]; <- ADAPTATION TO clang and MSVC
         vector<string> lines;
         while( ifs.getline(thisline, NChars) )
         {
@@ -1477,6 +1477,7 @@ LSDIndexRaster LSDIndexRaster::clip_to_smaller_raster(LSDRaster& smaller_raster)
   {
     for(int col = 0; col<New_NCols; col++)
     {
+       //cout << row << " ¦¦ " << col << endl;
        NewData[row][col] = RasterData[row+YUL_row][col+XLL_col];
     }
   }
@@ -1488,6 +1489,30 @@ LSDIndexRaster LSDIndexRaster::clip_to_smaller_raster(LSDRaster& smaller_raster)
   TrimmedRaster.Update_GeoReferencingStrings();
 
   return TrimmedRaster;
+}
+
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+// THis copy the Nodata region from another raster WITH THE SAME DIMENSION AND RESOLUTION.
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+void LSDIndexRaster::NoData_from_another_raster(LSDRaster& other_raster)
+{
+
+
+  //Array2D<int> NewData(NRows,NCols, NoDataValue);
+  //Array2D<float> other_raster_data = other_raster.get_RasterData();
+
+  for(int row = 0; row< NRows; row++)
+  {
+    for(int col = 0; col<NCols; col++)
+    {
+      if(other_raster.get_data_element(row,col) == NoDataValue)
+      {
+        RasterData[row][col] = NoDataValue;
+      }
+    }
+  }
+
+
 }
 
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-

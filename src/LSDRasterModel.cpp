@@ -42,6 +42,7 @@
 #include <string>
 #include <math.h>
 #include <string.h>
+#include <queue>
 #include <sys/stat.h>
 #include <ctime>
 #include <cstdlib>
@@ -57,8 +58,11 @@
 #include "LSDStatsTools.hpp"
 #include "LSDIndexRaster.hpp"
 #include "LSDRasterModel.hpp"
+#include "LSDSpatialCSVReader.hpp"
+#include "LSDRasterInfo.hpp"
 #include "LSDCRNParameters.hpp"
 #include "LSDParticleColumn.hpp"
+#include "LSDJunctionNetwork.hpp"
 using namespace std;
 using namespace TNT;
 using namespace JAMA;
@@ -73,7 +77,8 @@ LSDRasterModel& LSDRasterModel::operator=(const LSDRasterModel& rhs)
   if (&rhs != this)
    {
     create(rhs.get_NRows(),rhs.get_NCols(),rhs.get_XMinimum(),rhs.get_YMinimum(),
-           rhs.get_DataResolution(),rhs.get_NoDataValue(),rhs.get_RasterData());
+           rhs.get_DataResolution(),rhs.get_NoDataValue(),rhs.get_RasterData(), 
+           rhs.get_GeoReferencingStrings());
    }
   return *this;
  }
@@ -125,7 +130,8 @@ void LSDRasterModel::create(string filename, string extension)
 
 // this creates a raster filled with no data values
 void LSDRasterModel::create(int nrows, int ncols, float xmin, float ymin,
-            float cellsize, float ndv, Array2D<float> data)
+            float cellsize, float ndv, Array2D<float> data,
+            map<string,string> GRS)
 {
   NRows = nrows;
   NCols = ncols;
@@ -133,6 +139,7 @@ void LSDRasterModel::create(int nrows, int ncols, float xmin, float ymin,
   YMinimum = ymin;
   DataResolution = cellsize;
   NoDataValue = ndv;
+  GeoReferencingStrings =  GRS;
 
   RasterData = data.copy();
 
@@ -147,9 +154,9 @@ void LSDRasterModel::create(int nrows, int ncols, float xmin, float ymin,
     exit(EXIT_FAILURE);
   }
 
-  int zone = 1;
-  string NorS = "N";
-  impose_georeferencing_UTM(zone, NorS);
+  //int zone = 1;
+  //string NorS = "N";
+  //impose_georeferencing_UTM(zone, NorS);
 
 }
 
@@ -222,7 +229,7 @@ void LSDRasterModel::default_parameters( void )
   set_maxtimeStep (1000);          // this limits the adaptive timestep
   set_endTime( 10000 );
 
-  
+
   endTime_mode = 0;
   set_num_runs( 1 );
   set_K( 0.0002 );
@@ -236,7 +243,7 @@ void LSDRasterModel::default_parameters( void )
   set_print_interval( 10 );            // number of timesteps
   set_float_print_interval (5000);    // this is in years
   set_next_printing_time (0);
-  
+
   set_steady_state_tolerance( 0.00001 );
   current_time = 0;
   noise = 0.1;
@@ -278,9 +285,15 @@ void LSDRasterModel::default_parameters( void )
 LSDRaster LSDRasterModel::return_as_raster()
 {
   LSDRaster NewRaster(NRows, NCols, XMinimum, YMinimum,
-                      DataResolution, NoDataValue, RasterData, 
+                      DataResolution, NoDataValue, RasterData,
                       GeoReferencingStrings);
   return NewRaster;
+}
+
+void LSDRasterModel::set_raster_data(LSDRaster& Raster)
+{
+  Array2D<float> temp_data = Raster.get_RasterData();
+  RasterData = temp_data.copy(); 
 }
 
 
@@ -424,9 +437,9 @@ void LSDRasterModel::initialize_model(string param_file)
     else if (lower == "d")      K_soil     = atof(value.c_str());
     else if (lower == "s_c")    S_c     = atof(value.c_str());
     else if (lower == "rigidity")    rigidity  = atof(value.c_str());
-    else if (lower == "nrows"){    if (not loaded_from_file)   NRows     = atoi(value.c_str());}
-    else if (lower == "ncols"){    if (not loaded_from_file)   NCols     = atoi(value.c_str());}
-    else if (lower == "resolution"){  if (not loaded_from_file)   DataResolution   = atof(value.c_str()); }
+    else if (lower == "nrows"){    if (loaded_from_file == false)   NRows     = atoi(value.c_str());}
+    else if (lower == "ncols"){    if (loaded_from_file == false)   NCols     = atoi(value.c_str());}
+    else if (lower == "resolution"){  if (loaded_from_file == false)   DataResolution   = atof(value.c_str()); }
     else if (lower == "print interval")  print_interval  = atoi(value.c_str());
     else if (lower == "k mode")    K_mode    = atoi(value.c_str());
     else if (lower == "d mode")    D_mode     = atoi(value.c_str());
@@ -477,7 +490,7 @@ void LSDRasterModel::initialize_model(string param_file)
     report_name = name;
   else
     report_name = param_file;
-  if (not loaded_from_file)
+  if (loaded_from_file == false)
   {
     RasterData = Array2D<float>(NRows, NCols, 0.0);
     // Generate random noise
@@ -966,6 +979,11 @@ void LSDRasterModel::initialise_taper_edges_and_raise_raster(int rows_to_taper)
     }
   }
   cout << "Tapering. Found the mininum elevation, it is: " << MinElev << endl;
+  if (MinElev == -9999)
+  {
+    cout << "Your min elev is no data value. Setting it to 0. This means I won't raise or lower your raster" << endl;
+    MinElev = 0;
+  }
 
 
   // now adjust elevations so the lowst points are at zero elevation
@@ -1031,7 +1049,7 @@ void LSDRasterModel::raise_and_fill_raster()
   }
 
   RasterData = zeta.copy();
-  
+
   cout << "Now I am filling the data" << endl;
   LSDRaster *temp;
   temp = new LSDRaster(*this);
@@ -1042,8 +1060,146 @@ void LSDRasterModel::raise_and_fill_raster()
 
 }
 
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+// This raises and then fills the DEM
+// overloaded to take the min slope as an argument - FJC July 2018
+//
+// SMM 25/08/2017
+
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+void LSDRasterModel::raise_and_fill_raster(float min_slope_for_fill)
+{
+  Array2D<float> zeta=RasterData.copy();
+
+  // first we need to loop through all the data and raise above the sea level,
+  // or lower to sea level accordingly
+  float MinElev = 9999999;
+  for(int row = 0; row<NRows; row++)
+  {
+    for(int col = 0; col<NCols; col++)
+    {
+      if (zeta[row][col] < MinElev)
+      {
+        MinElev = zeta[row][col];
+      }
+    }
+  }
+  cout << "Raising raster. Found the mininum elevation, it is: " << MinElev << endl;
 
 
+  // now adjust elevations so the lowst points are at zero elevation
+  for(int row = 0; row<NRows; row++)
+  {
+    for(int col = 0; col<NCols; col++)
+    {
+      zeta[row][col] = zeta[row][col]-MinElev;
+    }
+  }
+
+  RasterData = zeta.copy();
+
+  cout << "Now I am filling the data" << endl;
+  LSDRaster *temp;
+  temp = new LSDRaster(*this);
+  *temp = fill(min_slope_for_fill);
+  RasterData = temp->get_RasterData();
+  delete temp;
+
+}
+
+
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+// This raises part of the raster by a specified amount, in metres. Simulates
+// fault cutting horizontally across the raster.
+// throw amount is instantaneously applied.
+// int throw_type: 0 = top third of raster
+//                 1 = top half of raster
+//                 2 = top two thirds of raster
+//
+// FJC 06/07/18
+
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+void LSDRasterModel::normal_fault_part_of_raster(int throw_amt, int throw_type)
+{
+  Array2D<float> zeta=RasterData.copy();
+
+  if (throw_type == 0)
+  {
+    for (int row = 0; row < int(NRows/3); row++)
+    {
+      for (int col = 0; col < NCols; col++)
+      {
+        zeta[row][col] = zeta[row][col] + throw_amt;
+      }
+    }
+  }
+  else if (throw_type == 1)
+  {
+    for (int row = 0; row < int(NRows/2); row++)
+    {
+      for (int col = 0; col < NCols; col++)
+      {
+        zeta[row][col] = zeta[row][col] + throw_amt;
+      }
+    }
+  }
+  else if (throw_type == 2)
+  {
+    for (int row = 0; row < int(NRows - NRows/3); row++)
+    {
+      for (int col = 0; col < NCols; col++)
+      {
+        zeta[row][col] = zeta[row][col] + throw_amt;
+      }
+    }
+  }
+
+  RasterData = zeta.copy();
+}
+
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+// This simulates a base level fall by raising the entire raster except the
+// first and last rows by a certain number of metres
+//
+// FJC 18/07/18
+
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+void LSDRasterModel::base_level_fall(int uplift_amt)
+{
+  Array2D<float> zeta=RasterData.copy();
+
+  for (int row = 0; row < NRows - 1; row++)
+  {
+    for (int col = 0; col < NCols; col++)
+    {
+      bool base_level = is_base_level(row, col);
+      if (base_level == false)
+      {
+        zeta[row][col] = zeta[row][col] + uplift_amt;
+      }
+    }
+  }
+
+  RasterData = zeta.copy();
+}
+
+
+
+
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+void LSDRasterModel::AdjustElevation(float elevation_change)
+{
+  for(int row = 0; row< NRows; row++)
+  {
+    for(int col = 0; col<NCols; col++)
+    {
+      if (RasterData[row][col] != NoDataValue)
+      {
+        RasterData[row][col] = RasterData[row][col]+elevation_change;
+      }
+    }
+  } 
+} 
 
 
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -1252,7 +1408,7 @@ void LSDRasterModel::check_steady_state( void )
   // mean this is only reached if it gets to steady state. It then checks if
   // this is the initial steady, state, and if not switches the initial_steady_state
   // flag to true
-  if (not initial_steady_state)
+  if (initial_steady_state == false)
   {
     initial_steady_state = true;
     time_delay = current_time;
@@ -1265,7 +1421,7 @@ void LSDRasterModel::check_steady_state( void )
     {
       endTime += time_delay;
     }
-    if (not quiet)
+    if (quiet == false)
     {
       cout << "\t\t\t> Initial steady state reached at " << current_time;
     }
@@ -1290,7 +1446,7 @@ void LSDRasterModel::check_recording( void )
   {
     return;
   }
-  else if (not initial_steady_state)
+  else if (initial_steady_state == false)
   {
     // If we haven't reached steady state yet, don't record any data
     recording = false;
@@ -1355,7 +1511,7 @@ bool LSDRasterModel::check_end_condition( void )
     case 1:    // time specified is after reaching steady state
     {
       // end is only true if the time exceeds or is equal to the end time
-      if (not initial_steady_state || current_time <= endTime+timeStep)
+      if (initial_steady_state == false || current_time <= endTime+timeStep)
         return false;
       else
         return true;
@@ -1363,7 +1519,7 @@ bool LSDRasterModel::check_end_condition( void )
     }
     case 2:    // Number specified is a number of cycles of periodicity
     {
-      if (not initial_steady_state || num_cycles <= endTime)
+      if (initial_steady_state ==  false || num_cycles <= endTime)
         return false;
       else
         return true;
@@ -1382,7 +1538,7 @@ bool LSDRasterModel::check_end_condition( void )
       //  if (not quiet)
       //    cout << "\n" << endTime << " " << time_delay << " " << periodicity << " " <<endTime_adjusted << " hi " << endl;
       endTime = endTime_adjusted;
-      if (not initial_steady_state || current_time < endTime_adjusted+timeStep)
+      if (initial_steady_state == false || current_time < endTime_adjusted+timeStep)
       {
         return false;
       }
@@ -1421,7 +1577,7 @@ bool LSDRasterModel::check_end_condition( void )
 void LSDRasterModel::check_periodicity_switch( void )
 {
   // don't do anything if not periodic
-  if ((K_mode == 0 && D_mode == 0) || (not initial_steady_state && not cycle_steady_check))
+  if ((K_mode == 0 && D_mode == 0) || (initial_steady_state == false && cycle_steady_check == false))
     return;
   else if (period_mode == 2 || period_mode == 4)
   {
@@ -1465,19 +1621,19 @@ bool LSDRasterModel::check_if_hung( void )
   return false;
   switch (endTime_mode){
     case 1:
-      if (not initial_steady_state && current_time > endTime*100)
+      if (initial_steady_state == false && current_time > endTime*100)
         return true;
       else
         return false;
       break;
     case 2:
-      if (not initial_steady_state && num_cycles > endTime * 100)
+      if (initial_steady_state == false && num_cycles > endTime * 100)
         return true;
       else
         return false;
       break;
     case 3:
-      if (not initial_steady_state && current_time > endTime*100)
+      if (initial_steady_state == false && current_time > endTime*100)
         return true;
       else
         return false;
@@ -1518,7 +1674,7 @@ void LSDRasterModel::reset_model( void )
 LSDRasterModel LSDRasterModel::create_buffered_surf(int b_type)
 {
   Array2D<float> surf = RasterData.copy();
-   Array2D<float> buff(NRows+2,NCols+2);
+  Array2D<float> buff(NRows+2,NCols+2);
   Array2D<float> buff_surf = buff.copy();
 //
 //   switch(b_type)
@@ -1550,7 +1706,7 @@ LSDRasterModel LSDRasterModel::create_buffered_surf(int b_type)
           buff_surf[row+1][col+1]=surf[row][col];
         }
       }
-      LSDRasterModel BufferedSurface(NRows+2, NCols+2, XMinimum-DataResolution, YMinimum-DataResolution, DataResolution, NoDataValue, buff_surf);
+      LSDRasterModel BufferedSurface(NRows+2, NCols+2, XMinimum-DataResolution, YMinimum-DataResolution, DataResolution, NoDataValue, buff_surf, GeoReferencingStrings);
       return BufferedSurface;
 //       break;
 //
@@ -1593,7 +1749,7 @@ LSDRasterModel LSDRasterModel::create_buffered_surf(float South_boundary_elevati
       buff_surf[row+1][col+1]=surf[row][col];
     }
   }
-  LSDRasterModel BufferedSurface(NRows+2, NCols+2, (XMinimum-DataResolution), (YMinimum-DataResolution), DataResolution, NoDataValue, buff_surf);
+  LSDRasterModel BufferedSurface(NRows+2, NCols+2, (XMinimum-DataResolution), (YMinimum-DataResolution), DataResolution, NoDataValue, buff_surf, GeoReferencingStrings);
   return BufferedSurface;
 }
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -1612,8 +1768,8 @@ void LSDRasterModel::interpret_boundary(short &dimension, bool &periodic, int &s
   if (boundary_conditions[1-dimension][0] == 'p' || boundary_conditions[3-dimension][0] == 'p')
   {
     periodic = true;
-    if (not (boundary_conditions[1-dimension][0] && boundary_conditions[3-dimension][0] == 'p'))
-      if (not quiet) cout << "Warning! Entered one boundary as periodic, but not t'other! Assuming both are periodic." << endl;
+    if ( (boundary_conditions[1-dimension][0] && boundary_conditions[3-dimension][0] == 'p') == false)
+      if ( quiet == false) cout << "Warning! Entered one boundary as periodic, but not t'other! Assuming both are periodic." << endl;
   }
   if (dimension == 0)
     size = (NRows-2)*NCols;
@@ -1692,21 +1848,95 @@ float LSDRasterModel::find_max_boundary(int boundary_number)
 
 ////------------------------------------------------------------------------------
 //// impose_channels: this imposes channels onto the landscape
-//// the row and column of the channels are stored in the c_rows and c_cols vectors
-//// the elevation of the channles are stored in the c_zeta file
+//// You need to print a channel to csv and then load the data
 ////------------------------------------------------------------------------------
-//LSDRasterModel LSDRasterModel::impose_channels(vector<int> c_rows, vector<int> c_cols, vector<float> c_zeta)
-//{
-//  Array2D<float> zeta = RasterData.copy();
-//  int n_channel_nodes = c_rows.size();
-//
-//  for (int i = 0; i<n_channel_nodes; i++)
-//  {
-//    zeta[ c_rows[i] ][ c_cols[i] ] = c_zeta[i];
-//  }
-//  LSDRasterModel Zeta(NRows, NCols, XMinimum, YMinimum, DataResolution, NoDataValue, zeta);
-//  return Zeta;
-//}
+void LSDRasterModel::impose_channels(LSDSpatialCSVReader& source_points_data)
+{
+
+  string column_name = "elevation(m)";
+
+
+  Array2D<float> zeta=RasterData.copy();
+
+  // Step one, create donor "stack" etc. via FlowInfo
+  LSDRaster temp(NRows, NCols, XMinimum, YMinimum, DataResolution, NoDataValue, zeta, GeoReferencingStrings);
+
+  // need to fill the raster to ensure there are no internal base level nodes
+  cout << "I am going to fill" << endl;
+  float slope_for_fill = 0.0001; 
+  cout << "Filling." << endl;
+  LSDRaster filled_topography = temp.fill(slope_for_fill);
+
+  cout << "Getting the flow info. This might take some time." << endl;
+  LSDFlowInfo flow(boundary_conditions, filled_topography);
+  // update the raster
+  zeta = filled_topography.get_RasterData();
+
+  // Get the local node index as well as the elevations
+  vector<int> ni = source_points_data.get_nodeindices_from_lat_long(flow);
+  vector<float> elev = source_points_data.data_column_to_float(column_name);
+  // make the map
+  cout << "I am making an elevation map. This will not work if points in the raster lie outside of the csv channel points." << endl;
+  int row,col;
+  for(int i = 0; i< int(ni.size()); i++)
+  {
+    flow.retrieve_current_row_and_col( ni[i], row, col);
+    zeta[row][col] = elev[i];
+  }
+
+
+  this->RasterData = zeta.copy();
+
+  RasterData = zeta.copy();
+}
+
+
+////------------------------------------------------------------------------------
+//// impose_channels: this imposes channels onto the landscape
+//// You need to print a channel to csv and then load the data
+////------------------------------------------------------------------------------
+LSDSpatialCSVReader LSDRasterModel::get_channels_for_burning(int contributing_pixels)
+{
+
+  string column_name = "elevation(m)";
+
+  Array2D<float> zeta=RasterData.copy();
+
+  // Step one, create donor "stack" etc. via FlowInfo
+  LSDRaster temp(NRows, NCols, XMinimum, YMinimum, DataResolution, NoDataValue, zeta, GeoReferencingStrings);
+
+  // need to fill the raster to ensure there are no internal base level nodes
+  cout << "I am going to fill" << endl;
+  float slope_for_fill = 0.0001; 
+  cout << "Filling." << endl;
+  LSDRaster filled_topography = temp.fill(slope_for_fill);
+
+  cout << "Getting the flow info. This might take some time." << endl;
+  LSDFlowInfo FlowInfo(boundary_conditions, filled_topography);
+
+  // calculate the flow accumulation
+  cout << "\t Calculating flow accumulation (in pixels)..." << endl;
+  LSDIndexRaster FlowAcc = FlowInfo.write_NContributingNodes_to_LSDIndexRaster();
+
+  //get the sources
+  vector<int> sources;
+  sources = FlowInfo.get_sources_index_threshold(FlowAcc, contributing_pixels);
+
+  // now get the junction network
+  LSDJunctionNetwork ChanNetwork(sources, FlowInfo);
+  
+  // print the network
+  string chan_fname = "./temp_channels";
+  string full_chan_fname = "./temp_channels.csv";
+  ChanNetwork.PrintChannelNetworkToCSV_WithElevation(FlowInfo, chan_fname,filled_topography);
+
+  // Now load a csv object
+  LSDRasterInfo RI(temp);
+  LSDSpatialCSVReader source_points_data( RI, full_chan_fname );
+
+  return source_points_data;
+}
+
 
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 // CALCULATE EROSION RATES
@@ -1777,7 +2007,7 @@ float LSDRasterModel::get_total_erosion_rate_over_timestep()
         if(RasterData[row][col]!=NoDataValue)
         {
           // make sure this is not a base level node
-          if(not is_base_level(row,col))
+          if(is_base_level(row,col) == false)
           {
             erate_total+= get_erosion_at_cell(row, col);
             N_erate++;
@@ -1817,7 +2047,7 @@ LSDRasterModel LSDRasterModel::uplift_surface(float UpliftRate, float dt)
   // make a new rastermodel with the updated data.
   // SMM Note: this is a bit risky since only a very limited subset of the
   // data members are translated across
-  LSDRasterModel Zeta(NRows, NCols, XMinimum, YMinimum, DataResolution, NoDataValue, ZetaRaster);
+  LSDRasterModel Zeta(NRows, NCols, XMinimum, YMinimum, DataResolution, NoDataValue, ZetaRaster, GeoReferencingStrings);
   return Zeta;
 }
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -1846,7 +2076,7 @@ LSDRasterModel LSDRasterModel::uplift_surface(Array2D<float> UpliftRate, float d
   // make a new rastermodel with the updated data.
   // SMM Note: this is a bit risky since only a very limited subset of the
   // data members are translated across
-  LSDRasterModel Zeta(NRows, NCols, XMinimum, YMinimum, DataResolution, NoDataValue, ZetaRaster);
+  LSDRasterModel Zeta(NRows, NCols, XMinimum, YMinimum, DataResolution, NoDataValue, ZetaRaster, GeoReferencingStrings);
   return Zeta;
 }
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -2130,7 +2360,7 @@ float LSDRasterModel::get_average_upflit_rate_last_timestep()
       if(RasterData[row][col] != NoDataValue)
       {
         // check to see if it is a base level cell
-        if(not is_base_level(row,col))
+        if(is_base_level(row,col) == false)
         {
           tot_urate += get_uplift_rate_at_cell(row, col);
           N_U++;
@@ -2722,7 +2952,7 @@ LSDRasterModel LSDRasterModel::run_model_implicit_hillslope_and_fluvial(string p
   string erosion_rate_fname;
 
   // data elements: vectors and arrays
-  LSDRasterModel Zeta(NRows, NCols, XMinimum, YMinimum, DataResolution, NoDataValue, get_RasterData());
+  LSDRasterModel Zeta(NRows, NCols, XMinimum, YMinimum, DataResolution, NoDataValue, get_RasterData(), GeoReferencingStrings);
   Array2D<float> ZetaOld;            // surface from last timestep (for getting sediment flux)
   Array2D<float> ZetaTemp(NRows,NCols);
   Array2D<float> ZetaDivergence;      // del dot zeta
@@ -2773,7 +3003,7 @@ LSDRasterModel LSDRasterModel::run_model_implicit_hillslope_and_fluvial(string p
              inv_dx_S_c_squared, inv_dy_S_c_squared, dx_front_term, dy_front_term,
                vec_k_value_i_j, vec_k_value_ip1_j, vec_k_value_im1_j, vec_k_value_i_jp1, vec_k_value_i_jm1);
 
-  if (not quiet) cout << "LINE " << __LINE__ << ": assembler matrix initialized" << endl;
+  if (quiet == false) cout << "LINE " << __LINE__ << ": assembler matrix initialized" << endl;
 
   // do a time loop
   // now do the time loop
@@ -2781,7 +3011,7 @@ LSDRasterModel LSDRasterModel::run_model_implicit_hillslope_and_fluvial(string p
   {
     t_ime+= dt;
 
-    if (not quiet) cout << flush << "time is: " << t_ime << "\r";
+    if (quiet == false) cout << flush << "time is: " << t_ime << "\r";
 
 //     // buffer the landscape
 //     ZetaBuff = Zeta.create_buffered_surf(South_boundary_elevation,North_boundary_elevation);
@@ -2884,7 +3114,7 @@ void LSDRasterModel::run_components( void )
     if (hillslope)
     {
       if (nonlinear)
-      {    
+      {
         //soil_diffusion_fv_nonlinear();
         MuddPILE_nl_soil_diffusion_nouplift();
       }
@@ -2939,7 +3169,7 @@ void LSDRasterModel::run_components( void )
       print_rasters( frame );
       ++frame;
     }
-    if (not quiet) cout << "\rTime: " << current_time << " years" << flush;
+    if (quiet == false) cout << "\rTime: " << current_time << " years" << flush;
     ++print;
 
     // check to see if steady state has been achieved
@@ -2947,7 +3177,7 @@ void LSDRasterModel::run_components( void )
     check_steady_state();
     //cout << "Line 2224, checked, iss: " << initial_steady_state << endl;
 
-  } while (not check_end_condition());
+  } while (check_end_condition() == false);
 
   if ( print_interval == 0 || (print_interval > 0 && ((print-1) % print_interval) != 0))
   {
@@ -3066,13 +3296,13 @@ void LSDRasterModel::run_components_combined( void )
       print_rasters_and_csv( frame );
       ++frame;
     }
-    if (not quiet) cout << "\rTime: " << current_time << " years" << flush;
+    if (quiet == false) cout << "\rTime: " << current_time << " years" << flush;
     ++print;
 
     // check to see if steady state has been achieved
     check_steady_state();
 
-  } while (not check_end_condition());
+  } while (check_end_condition() == false);
 
   if ( print_interval == 0 || (print_interval > 0 && ((print-1) % print_interval) != 0))
   {
@@ -3155,7 +3385,7 @@ void LSDRasterModel::run_components_combined( LSDRaster& URaster, LSDRaster& KRa
     {
       // currently the only option is stream power using the FASTSCAPE
       // algorithm so there are no choices here
-      
+
       if (use_adaptive_timestep)
       {
         //cout << "I am using an adaptive timestep" << endl;
@@ -3169,7 +3399,7 @@ void LSDRasterModel::run_components_combined( LSDRaster& URaster, LSDRaster& KRa
 
     //update the time
     current_time += timeStep;
-    
+
     // now see if the time has exceeded the next print time
     if (current_time > next_printing_time)
     {
@@ -3180,9 +3410,9 @@ void LSDRasterModel::run_components_combined( LSDRaster& URaster, LSDRaster& KRa
       print_rasters_and_csv( frame );
       ++frame;
     }
-    if (not quiet) cout << "\rTime: " << current_time << " years" << flush;
+    if (quiet == false) cout << "\rTime: " << current_time << " years" << flush;
 
-  } while (not check_end_condition());
+  } while (check_end_condition() == false);
 
   // reset the current frame
   current_frame = frame;
@@ -3327,7 +3557,7 @@ void LSDRasterModel::run_components_combined_cell_tracker( vector<LSDParticleCol
 
       ++frame;
     }
-    if (not quiet) cout << "\rTime: " << current_time << " years" << flush;
+    if ( quiet == false) cout << "\rTime: " << current_time << " years" << flush;
     ++print;
 
     //cout << "Line 2693, data[10][10]: " << RasterData[10][10] << endl;
@@ -3335,7 +3565,7 @@ void LSDRasterModel::run_components_combined_cell_tracker( vector<LSDParticleCol
     // check to see if steady state has been achieved
     //check_steady_state();
 
-  }  while (not check_end_condition());
+  }  while ( check_end_condition() == false);
 
   eroded_cells = e_cells;
 }
@@ -3448,7 +3678,7 @@ void LSDRasterModel::run_model( void )
 
     recording = false;                 // SMM: not clear why this is set to false
 
-    if (not initialized && not quiet)
+    if ( initialized == false &&  quiet == false)
     {
       cout << "Model has not been initialized with a parameter file." << endl;
       cout << "All values used are defaults" << endl;
@@ -3477,12 +3707,12 @@ void LSDRasterModel::run_model_from_steady_state( void )
   RasterData = steady_state_data;
   reset_model();
 
-  if (not initialized && not quiet)
+  if ( initialized == false &&  quiet == false)
   {
     cout << "Model has not been initialized with a parameter file." << endl;
     cout << "All values used are defaults" << endl;
   }
-  if (not initial_steady_state)
+  if ( initial_steady_state == false)
   {
     cout << "Model has not been set to steady state yet" << endl;
     cout << "Run LSDRasterModel::reach_steady_state( float tolerance ) first" << endl;
@@ -3499,7 +3729,7 @@ void LSDRasterModel::run_model_from_steady_state( void )
 
   // If the last output wasn't written, write it
 
-  if (not quiet) cout << "\nModel finished!\n" << endl;
+  if ( quiet == false) cout << "\nModel finished!\n" << endl;
   final_report();
 }
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -3537,7 +3767,7 @@ void LSDRasterModel::reach_steady_state( void )
   bool reporting_swap = reporting;
   string name_swap = name;
 
-  if (not initialized && not quiet)
+  if ( initialized == false &&  quiet == false)
   {
     cout << "Model has not been initialized with a parameter file." << endl;
     cout << "All values used are defaults" << endl;
@@ -3567,7 +3797,7 @@ void LSDRasterModel::reach_steady_state( void )
   print_interval = 0;
   reporting = false;
 
-  if (not quiet)
+  if ( quiet == false)
   {
     cout << "Producing steady state profile" << endl;
   }
@@ -3581,7 +3811,7 @@ void LSDRasterModel::reach_steady_state( void )
   // run components
   run_components();
 
-  if (not quiet)
+  if ( quiet == false)
   {
     cout << "Finished producing cyclic steady" << endl;
   }
@@ -3598,10 +3828,10 @@ void LSDRasterModel::reach_steady_state( void )
   initial_steady_state = false;
   current_time = 0;
 
-  if (not quiet) cout << "Did cyclic steady, now running at constant forcing for a while." << endl;
+  if ( quiet == false) cout << "Did cyclic steady, now running at constant forcing for a while." << endl;
   cout << "Timestep is: " << timeStep << endl;
   run_components();
-  if (not quiet) cout << "Forced from constant steady state, exiting steady state routine." << endl;
+  if ( quiet == false) cout << "Forced from constant steady state, exiting steady state routine." << endl;
 
   endTime = endTime_swap;
   periodicity = period_swap;
@@ -3651,7 +3881,7 @@ void LSDRasterModel::soil_diffusion_fv( void )
   }
 
 
-  if (not defined)
+  if (defined == false)
   {
   mtl_initiate_assembler_matrix(problem_dimension, inv_dx_S_c_squared, inv_dy_S_c_squared,
                   dx_front_term, dy_front_term, vec_k_value_i_j, vec_k_value_ip1_j,
@@ -3704,7 +3934,7 @@ mtl::compressed2D<float> LSDRasterModel::generate_fd_matrix( int dimension, int 
     }
     else if (dimension == 0)
     {
-      if (not periodic)
+      if ( periodic == false)
         --num_neighbours;
       else
         ins[i][i+width-1] << -r;
@@ -3717,7 +3947,7 @@ mtl::compressed2D<float> LSDRasterModel::generate_fd_matrix( int dimension, int 
     }
     else if (dimension == 0)
     {
-      if (not periodic)
+      if ( periodic == false)
         --num_neighbours;
       else
         ins[i][i-width+1] << -r;
@@ -3730,7 +3960,7 @@ mtl::compressed2D<float> LSDRasterModel::generate_fd_matrix( int dimension, int 
     }
     else if (dimension == 1)
     {
-      if (not periodic)
+      if ( periodic == false)
         --num_neighbours;
       else
         ins[i][i+(width*(NCols-1))] << -r;
@@ -3743,7 +3973,7 @@ mtl::compressed2D<float> LSDRasterModel::generate_fd_matrix( int dimension, int 
     }
     else if (dimension == 1)
     {
-      if (not periodic)
+      if (periodic == false)
         --num_neighbours;
       else
         ins[i][i-(width*(NCols-1))] << -r;
@@ -3754,13 +3984,13 @@ mtl::compressed2D<float> LSDRasterModel::generate_fd_matrix( int dimension, int 
     if (row > 0 && col > 0)
       ins[i][i-width-1] << -r_;
     else if (dimension == 0 && row > 0)
-      if (not periodic)
+      if (periodic == false)
         --num_neighbours_;
       else{
         ins[i][i-1] << -r_;}
     else if (dimension == 1 && col > 0)
     {
-      if (not periodic)
+      if (periodic == false)
         --num_neighbours_;
       else
         ins[i][i+(width*(NCols-1))-1] << -r;
@@ -3772,14 +4002,14 @@ mtl::compressed2D<float> LSDRasterModel::generate_fd_matrix( int dimension, int 
       ins[i][i-width+1] << -r_;
     else if (dimension == 0 && row > 0)
     {
-      if (not periodic)
+      if (periodic == false)
         --num_neighbours_;
       else
         ins[i][i-(2*width)+1] << -r_;
     }
     else if (dimension == 1 && col < width-1)
     {
-      if (not periodic)
+      if (periodic == false)
         --num_neighbours_;
       else
         ins[i][i+(width*(NCols-1))+1] << -r_;
@@ -3790,7 +4020,7 @@ mtl::compressed2D<float> LSDRasterModel::generate_fd_matrix( int dimension, int 
       ins[i][i+width-1] << -r_;
     else if (dimension == 0 && row < height-1)
     {
-      if (not periodic)
+      if (periodic == false)
         --num_neighbours_;
       else
         ins[i][i+(2*width)-1] << -r_;
@@ -3798,7 +4028,7 @@ mtl::compressed2D<float> LSDRasterModel::generate_fd_matrix( int dimension, int 
 
     else if (dimension == 1 && col > 0)
     {
-      if (not periodic)
+      if (periodic == false)
         --num_neighbours_;
       else
         ins[i][col-1] << -r_;
@@ -3811,7 +4041,7 @@ mtl::compressed2D<float> LSDRasterModel::generate_fd_matrix( int dimension, int 
     }
     else if (dimension == 0 && row < height-1)
     {
-      if (not periodic)
+      if (periodic == false)
         --num_neighbours_;
       else
         ins[i][i+1] << -r_;
@@ -3819,7 +4049,7 @@ mtl::compressed2D<float> LSDRasterModel::generate_fd_matrix( int dimension, int 
 
     else if (dimension == 1 && col < width-1)
     {
-      if (not periodic)
+      if (periodic == false)
         --num_neighbours_;
       else
         ins[i][col+1] << -r_;
@@ -3921,7 +4151,7 @@ void LSDRasterModel::soil_diffusion_fd_linear( void )
   // Unpack data
   mtl::dense_vector <float> data_vector = build_fd_vector(dimension, size);
 
-  if (not quiet && name == "debug" && size < 100)
+  if ( quiet == false && name == "debug" && size < 100)
   {
     cout << "Data: " << endl;
     for (int i=0; i<NRows; ++i)
@@ -3956,7 +4186,7 @@ void LSDRasterModel::soil_diffusion_fd_linear( void )
 
 
   repack_vector(output, dimension);
-  if (not quiet && name == "debug" && size <100)
+  if (quiet == false && name == "debug" && size <100)
   {
     cout << "Output: " << endl;
     for (int i=0; i<size; ++i)
@@ -4142,7 +4372,7 @@ void LSDRasterModel::soil_diffusion_fv_nonlinear( void )
   // b
   mtl::dense_vector <float> data_vector = build_fv_vector(dimension, size);
 
-  if (not quiet && name == "debug" && NRows <= 10 && NCols <= 10)
+  if (quiet == false && name == "debug" && NRows <= 10 && NCols <= 10)
   {
   cout << "Data: " << endl;
   for (int i=0; i<NRows; ++i)
@@ -4204,7 +4434,7 @@ void LSDRasterModel::soil_diffusion_fv_nonlinear( void )
           max_diff = RasterData[i][j] - last_iteration[i][j];
       }
     }
-  if (not quiet && name == "debug" && size <100)
+  if (quiet == false && name == "debug" && size <100)
   {
     cout << "Output: " << endl;
     for (int i=0; i<size; ++i)
@@ -4224,7 +4454,6 @@ void LSDRasterModel::soil_diffusion_fv_nonlinear( void )
 }
 
 
-
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 // This takes the model and calculates the steady state fluvial surface derived from
 // a chi map
@@ -4234,7 +4463,7 @@ void LSDRasterModel::fluvial_snap_to_steady_state(float U)
   Array2D<float> zeta=RasterData.copy();
 
   // Step one, create donor "stack" etc. via FlowInfo
-  LSDRaster temp(NRows, NCols, XMinimum, YMinimum, DataResolution, NoDataValue, zeta);
+  LSDRaster temp(NRows, NCols, XMinimum, YMinimum, DataResolution, NoDataValue, zeta, GeoReferencingStrings);
 
   // need to fill the raster to ensure there are no internal base level nodes
   float slope_for_fill = 0.0001;
@@ -4280,6 +4509,282 @@ void LSDRasterModel::fluvial_snap_to_steady_state(float U)
   RasterData = zeta.copy();
 }
 
+
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+// This snaps to steady based on an input file with elevations and node indicies
+// overloaded from the previous function
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+void LSDRasterModel::fluvial_snap_to_steady_variable_K_variable_U(LSDRaster& K_values, 
+                                  LSDRaster& U_values, LSDSpatialCSVReader& source_points_data, 
+                                  bool carve_before_fill)
+{
+
+  string column_name = "elevation(m)";
+
+
+  Array2D<float> zeta=RasterData.copy();
+
+  // Step one, create donor "stack" etc. via FlowInfo
+  LSDRaster temp(NRows, NCols, XMinimum, YMinimum, DataResolution, NoDataValue, zeta, GeoReferencingStrings);
+
+  // need to fill the raster to ensure there are no internal base level nodes
+  cout << "I am going to carve and fill" << endl;
+  float slope_for_fill = 0.0001; 
+  LSDRaster filled_topography,carved_topography;
+  if(carve_before_fill)
+  {
+    cout << "Carving and filling." << endl;
+    carved_topography = temp.Breaching_Lindsay2016();
+    filled_topography = carved_topography.fill(slope_for_fill);
+  }
+  else
+  {
+    cout << "Filling." << endl;
+    filled_topography = temp.fill(slope_for_fill);
+  }
+  cout << "Getting the flow info. This might take some time." << endl;
+  LSDFlowInfo flow(boundary_conditions, filled_topography);
+  // update the raster
+  zeta = filled_topography.get_RasterData();
+
+  // Get the local node index as well as the elevations
+  vector<int> ni = source_points_data.get_nodeindices_from_lat_long(flow);
+  vector<float> elev = source_points_data.data_column_to_float(column_name);
+  // make the map
+  cout << "I am making an elevation map. This will not work if points in the raster lie outside of the csv channel points." << endl;
+  map<int,float> elevation_map;
+  for(int i = 0; i< int(ni.size()); i++)
+  {
+    elevation_map[ ni[i] ] =  elev[i]; 
+  }
+
+  float m_exp = get_m();
+  float n_exp = get_n();
+  float one_over_n = 1/n_exp;
+
+  //float FP_NDV = K_values.get_NoDataValue();
+  float FP_value, K_value, U_value, receiver_elev, parenth_term, area_pow;
+
+
+  // Step one, create donor "stack" etc. via FlowInfo
+  vector <int> nodeList = flow.get_SVector();
+  int numNodes = nodeList.size();
+  int node, row, col, receiver, receiver_row, receiver_col;
+  float drainageArea, dx;
+
+  // these save a bit of computational expense.
+  float root_2 = pow(2, 0.5);
+  float dx_root2 = root_2*DataResolution;
+  float DR2 = DataResolution*DataResolution;
+
+  // Step two calculate new height
+  //for (int i=numNodes-1; i>=0; --i)
+  for (int i=0; i<numNodes; ++i)
+  {
+
+    // get the information about node relationships from the flow info object
+    node = nodeList[i];
+    flow.retrieve_current_row_and_col(node, row, col);
+    flow.retrieve_receiver_information(node, receiver, receiver_row, receiver_col);
+    drainageArea = flow.retrieve_contributing_pixels_of_node(node) *  DR2;
+
+
+    // check if this is a baselevel node
+    if(node == receiver)
+    {
+      //cout << "This is a base level node. I don't update this node." << endl;
+    }
+    else if(elevation_map.find(node) != elevation_map.end())
+    {
+      //cout << "This is one of the fixed channel nodes. I don't update this node." << endl;
+      FP_value = elevation_map[node];
+      zeta[row][col]= FP_value;
+    }
+    else
+    {
+      // Get the data from the individual points
+      K_value = K_values.get_data_element(row,col);
+      U_value = U_values.get_data_element(row,col);
+
+      // get the distance between nodes. Depends on flow direction
+      switch (flow.retrieve_flow_length_code_of_node(node))
+      {
+        case 0:
+          dx = -99;
+        break;
+        case 1:
+          dx = DataResolution;
+        break;
+        case 2:
+          dx = dx_root2;
+        break;
+        default:
+          dx = -99;
+        break;
+      }
+
+
+      receiver_elev = zeta[receiver_row][receiver_col];
+      area_pow = pow(drainageArea,m_exp);
+      parenth_term = U_value/(K_value*area_pow);
+      zeta[row][col] = receiver_elev+ dx*( pow(parenth_term,one_over_n));
+
+    }
+    
+
+
+
+  }
+  //return LSDRasterModel(NRows, NCols, XMinimum, YMinimum, DataResolution, NoDataValue, zeta);
+  this->RasterData = zeta.copy();
+
+  RasterData = zeta.copy();
+}
+
+
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+// This snaps to steady based on an input file with elevations and node indicies
+// overloaded from the previous function
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+void LSDRasterModel::fluvial_snap_to_steady_variable_K_variable_U(LSDRaster& K_values, LSDRaster& U_values, string csv_of_fixed_channel, bool carve_before_fill)
+{
+  LSDRasterInfo RI(K_values);
+
+  cout << "I am reading points from the file: "+ csv_of_fixed_channel << endl;
+  LSDSpatialCSVReader source_points_data( RI,csv_of_fixed_channel );
+
+  //*****************************
+  // Working from here
+  // Need to get out map that has key as node index and value as elevation
+  //******************************
+  string column_name = "elevation(m)";
+
+
+  Array2D<float> zeta=RasterData.copy();
+
+  // Step one, create donor "stack" etc. via FlowInfo
+  LSDRaster temp(NRows, NCols, XMinimum, YMinimum, DataResolution, NoDataValue, zeta, GeoReferencingStrings);
+
+  // need to fill the raster to ensure there are no internal base level nodes
+  float slope_for_fill = 0.0001; 
+  LSDRaster filled_topography,carved_topography;
+  if(carve_before_fill)
+  {
+    cout << "Carving and filling." << endl;
+    carved_topography = temp.Breaching_Lindsay2016();
+    filled_topography = carved_topography.fill(slope_for_fill);
+  }
+  else
+  {
+    cout << "Filling." << endl;
+    filled_topography = temp.fill(slope_for_fill);
+  }
+  cout << "Getting the flow info. This might take some time." << endl;
+  LSDFlowInfo flow(boundary_conditions, filled_topography);
+  // update the raster
+  zeta = filled_topography.get_RasterData();
+
+
+  // Get the local node index as well as the elevations
+  vector<int> ni = source_points_data.get_nodeindices_from_lat_long(flow);
+  vector<float> elev = source_points_data.data_column_to_float(column_name);
+  // make the map
+  cout << "I am making an elevation map. This will not work if points in the raster lie outside of the csv channel points." << endl;
+  map<int,float> elevation_map;
+  for(int i = 0; i< int(ni.size()); i++)
+  {
+    elevation_map[ ni[i] ] =  elev[i]; 
+  }
+
+  float m_exp = get_m();
+  float n_exp = get_n();
+  float one_over_n = 1/n_exp;
+
+  //float FP_NDV = K_values.get_NoDataValue();
+  float FP_value, K_value, U_value, receiver_elev, parenth_term, area_pow;
+
+
+  // Step one, create donor "stack" etc. via FlowInfo
+  vector <int> nodeList = flow.get_SVector();
+  int numNodes = nodeList.size();
+  int node, row, col, receiver, receiver_row, receiver_col;
+  float drainageArea, dx;
+
+  // these save a bit of computational expense.
+  float root_2 = pow(2, 0.5);
+  float dx_root2 = root_2*DataResolution;
+  float DR2 = DataResolution*DataResolution;
+
+  // Step two calculate new height
+  //for (int i=numNodes-1; i>=0; --i)
+  float new_zeta;
+  for (int i=0; i<numNodes; ++i)
+  {
+
+    // get the information about node relationships from the flow info object
+    node = nodeList[i];
+    flow.retrieve_current_row_and_col(node, row, col);
+    flow.retrieve_receiver_information(node, receiver, receiver_row, receiver_col);
+    drainageArea = flow.retrieve_contributing_pixels_of_node(node) *  DR2;
+
+
+    // check if this is a baselevel node
+    if(node == receiver)
+    {
+      //cout << "This is a base level node. I don't update this node." << endl;
+    }
+    else if(elevation_map.find(node) != elevation_map.end())
+    {
+      //cout << "This is one of the fixed channel nodes. I don't update this node." << endl;
+      FP_value = elevation_map[node];
+      zeta[row][col]= FP_value;
+    }
+    else
+    {
+      // Get the data from the individual points
+      K_value = K_values.get_data_element(row,col);
+      U_value = U_values.get_data_element(row,col);
+
+      // get the distance between nodes. Depends on flow direction
+      switch (flow.retrieve_flow_length_code_of_node(node))
+      {
+        case 0:
+          dx = -99;
+        break;
+        case 1:
+          dx = DataResolution;
+        break;
+        case 2:
+          dx = dx_root2;
+        break;
+        default:
+          dx = -99;
+        break;
+      }
+
+
+      receiver_elev = zeta[receiver_row][receiver_col];
+      area_pow = pow(drainageArea,m_exp);
+      parenth_term = U_value/(K_value*area_pow);
+      new_zeta = receiver_elev+ dx*( pow(parenth_term,one_over_n));
+
+      // now check to make sure the new zeta is not above the fixed channel
+
+
+    }
+    
+
+
+
+  }
+  //return LSDRasterModel(NRows, NCols, XMinimum, YMinimum, DataResolution, NoDataValue, zeta);
+  this->RasterData = zeta.copy();
+
+  RasterData = zeta.copy();
+}
+
+
+
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 // This takes the model and calculates the steady state fluvial surface derived from
 // a chi map
@@ -4289,7 +4794,7 @@ float LSDRasterModel::fluvial_snap_to_steady_state_tune_K_for_relief(float U, fl
   Array2D<float> zeta=RasterData.copy();
 
   // Step one, create donor "stack" etc. via FlowInfo
-  LSDRaster temp(NRows, NCols, XMinimum, YMinimum, DataResolution, NoDataValue, zeta);
+  LSDRaster temp(NRows, NCols, XMinimum, YMinimum, DataResolution, NoDataValue, zeta, GeoReferencingStrings);
 
   // We need to fill the raster so we don't get internally drained catchments
   float slope_for_fill = 0.0001;
@@ -4369,7 +4874,7 @@ float LSDRasterModel::fluvial_calculate_K_for_steady_state_relief(float U, float
   Array2D<float> zeta=RasterData.copy();
 
   // Step one, create donor "stack" etc. via FlowInfo
-  LSDRaster temp(NRows, NCols, XMinimum, YMinimum, DataResolution, NoDataValue, zeta);
+  LSDRaster temp(NRows, NCols, XMinimum, YMinimum, DataResolution, NoDataValue, zeta, GeoReferencingStrings);
 
   // We need to fill the raster so we don't get internally drained catchments
   float slope_for_fill = 0.0001;
@@ -4412,6 +4917,613 @@ float LSDRasterModel::fluvial_calculate_K_for_steady_state_relief(float U, float
 
 
 
+
+
+//============================================================================================================================
+// WORKING HERE
+// TRYING TO GET CRITICAL SLOPES WORKING
+//============================================================================================================================
+
+
+// Just a structure that define a node by ID and elevation
+// Same principle that Martin's filling algorithm
+struct MyNode
+{
+  float elevation;
+  std::pair<int,int> ID;
+};
+bool operator>( const MyNode& lhs, const MyNode& rhs )
+{
+  return lhs.elevation > rhs.elevation;
+}
+bool operator<( const MyNode& lhs, const MyNode& rhs )
+{
+  return lhs.elevation < rhs.elevation;
+}
+
+
+
+LSDRaster LSDRasterModel::basic_valley_fill_critical_slope(float critical_slope, int contributing_pixel_threshold)
+{
+  
+  Array2D<float> zeta=RasterData.copy();
+  float sqrt2 = sqrt(2);
+
+  // Step one, create donor "stack" etc. via FlowInfo
+  LSDRaster temp(NRows, NCols, XMinimum, YMinimum, DataResolution, NoDataValue, zeta, GeoReferencingStrings);  
+
+  // We need to fill the raster so we don't get internally drained catchments
+  cout << "I'm getting the flow info" << endl;
+  float slope_for_fill = 0.0001;
+  LSDRaster filled = temp.fill(slope_for_fill);
+  LSDFlowInfo flow(boundary_conditions, filled);
+  int contributing_pixels;
+
+  vector<int> S_vec = flow.get_SVector();
+
+  // also I want to keep track on which nodes have been processed
+  map<pair<int,int> ,bool> has_been_proc;
+  //And a map that check whether a node is in the river
+  map<pair<int,int> ,bool> is_river;
+  // This tests the exsitence of the node in a stack
+  map<pair<int,int> ,bool> is_in_DEM;
+  // Let's initialise my output as well
+  Array2D<float> output(NRows,NCols, NoDataValue);
+  // Before processing my nodes, I need to set up my priority queue
+  // And set 2 priority queues that will work together
+  priority_queue< MyNode, vector<MyNode>, greater<MyNode> > PriorityQueue_1, PriorityQueue_2;
+  // I'll need a switch to know which PQ is getting filled
+  int working_PQ = 1;
+  
+  
+  // let's go through the stack and get the river nodes
+  // I'll fill my PQ1 with the river_nodes
+  cout << "Filling the priority queues. The no data value is: " << NoDataValue <<endl;
+  //cout << "NRows: " << NRows << " and NCols: " << NCols << endl;
+  int this_row,this_col, current_node;
+  for(size_t i =0; i<S_vec.size(); i++)
+  {
+    // Row and col of the next element from the stack, starting from the baselevel of the given stack
+    current_node = S_vec[i];
+    flow.retrieve_current_row_and_col(current_node,this_row,this_col);
+    
+    // Topo and drainage area stack
+    float this_elev =temp.get_data_element(this_row,this_col);
+    contributing_pixels = flow.retrieve_contributing_pixels_of_node(current_node);
+    pair<int,int> this_node = {this_row, this_col};
+
+    is_in_DEM[this_node] = true;
+    
+    // Initialising my node
+    MyNode this_MyNode;
+    this_MyNode.ID = this_node;
+    this_MyNode.elevation = this_elev;
+
+    // is it a river
+    if(contributing_pixels>=contributing_pixel_threshold)
+    {
+      PriorityQueue_1.push(this_MyNode);
+      is_river[this_node] = true;
+      output[this_row][this_col] = this_elev;
+      has_been_proc[this_node] = true;
+    }
+    else
+    {
+      is_river[this_node] = false;
+      output[this_row][this_col] = NoDataValue;
+      has_been_proc[this_node] = false;
+    }
+  }
+  // std::cout << "is empty??"
+  
+  //cout << "Now it is time to create the slopes" << endl;
+  // Alright, I have my list of node ordered by elevation (thanks to fastscape and stuff)
+  while(PriorityQueue_1.empty() == false || PriorityQueue_2.empty() == false)
+  {
+    //cout << "Whohoo, starting with the priority queueueueueue" << endl;
+    // I'll want my node
+    pair<int,int> this_node;
+    MyNode this_MyNode;
+    if(working_PQ == 1)
+    {
+      this_MyNode = PriorityQueue_1.top();
+      PriorityQueue_1.pop();
+    }
+    else
+    {
+      this_MyNode = PriorityQueue_2.top();
+      PriorityQueue_2.pop();
+    }
+    this_node = this_MyNode.ID;
+    float this_elevation = this_MyNode.elevation;
+    int this_row = this_node.first;
+    int this_col = this_node.second;
+    // let me go through the neighbors
+    //cout << "z: " << this_elevation << " r: " << this_row << " c: " << this_col << endl;
+    vector<int> row_neighbors = {this_row-1,this_row,this_row+1};
+    vector<int> col_neighbors = {this_col-1,this_col,this_col+1};
+    for(int nR=0;nR<int(row_neighbors.size());nR++)
+    {
+      for(int nC=0;nC<int(col_neighbors.size());nC++)
+      {
+        // ignore that node
+        if(nR ==1 && nC == 1)
+        {
+          continue;
+        }
+        // getting this neighbor
+        int neighb_row = row_neighbors[nR];
+        int neighb_col = col_neighbors[nC];
+
+
+
+        // Make sure it is not at the edge of the DEM
+        if (neighb_row >= 0 && neighb_row <= NRows - 1 && neighb_col >= 0 && neighb_col <= NCols - 1)
+        {
+
+    
+          //cout << "nr: " << neighb_row << " nc: " << neighb_col << endl;
+          pair<int,int> nenode = {neighb_row,neighb_col};
+
+          if(not is_in_DEM[nenode])
+          {
+            //cout << "Hey this neighbour isn't in the DEM" << endl;
+          }  
+          else
+          {
+            if(not is_river[nenode] && not has_been_proc[nenode])
+            {
+              // If we got this far it means the node needs to be processed. 
+              float dx;
+              if((nR == 0 || nR == 2) && (nC == 0 || nC == 2))
+              {
+                dx = sqrt2*DataResolution;
+              }
+              else
+              {
+                dx = DataResolution;
+              }
+              // backcalculating the slope
+              //cout << "I'm getting a slope at r: " << neighb_row << " c: " << neighb_col << " elev: " << this_elevation << endl; 
+              float new_elev = critical_slope * dx + this_elevation;
+              //cout << "1..";
+              output[neighb_row][neighb_col] = new_elev;
+              //cout << "2..";
+              has_been_proc[nenode] = true;
+              //cout << "done" <<endl;
+              MyNode nextnode; 
+              nextnode.ID = nenode;
+              nextnode.elevation = new_elev;
+              if(working_PQ == 1)
+              {
+                PriorityQueue_2.push(nextnode);
+                // std::cout << "didd" << std::endl;
+              }
+              else
+              {
+                PriorityQueue_1.push(nextnode);
+              }
+            }       
+          }
+        }
+      }
+      if(working_PQ == 1 && PriorityQueue_1.empty() == true)
+      {
+        working_PQ = 2;
+      }
+      else if(working_PQ == 2 && PriorityQueue_2.empty() == true)
+      {
+        working_PQ = 1;
+      }
+    }
+  }
+  // for(size_t i=0)
+
+  cout << "Right, all finished. Generating the output raster" << endl;
+  LSDRaster output_raster(NRows, NCols, XMinimum, YMinimum, DataResolution, NoDataValue, output, GeoReferencingStrings);  
+  return output_raster;
+}
+
+
+LSDRaster LSDRasterModel::basic_smooth(float central_pixel_weighting)
+{
+
+  // at the moment the boundary type can only be 0 and this is a periodic
+  // boundary type at the E and W boundaries.
+
+  Array2D<float> new_data(NRows,NCols,NoDataValue);
+  float total_weighting;
+  float total_sum;
+  int rp1, rm1,cp1, cm1;
+  int boundary_type = 0;    // This later allows the code to be flexible in terms of the boundary type. 
+                            // Currently only periodic boundaries are on offer. 
+
+
+  for(int row = 0; row<NRows; row++)
+  {
+    for(int col = 0; col<NCols; col++)
+    {
+      total_weighting = 0;
+      total_sum = 0;
+
+      rp1 = row+1;
+      rm1 = row-1;
+      cp1 = col+1;
+      cm1 = col-1;
+
+      // implement boundary conditions.
+      if(boundary_type == 0)
+      {
+        if (rp1 == NRows)
+        {
+          rp1 = rm1;
+        }
+        if (rm1 == -1)
+        {
+          rm1 = rp1;
+        }
+        if (cp1 == NCols)
+        {
+          cp1 = 0;
+        }
+        if(cm1 == -1)
+        {
+          cm1 = NCols-1;
+        }
+      }
+      else
+      {
+        if (rp1 == NRows)
+        {
+          rp1 = rm1;
+        }
+        if (rm1 == -1)
+        {
+          rm1 = rp1;
+        }
+        if (cp1 == NCols)
+        {
+          cp1 = 0;
+        }
+        if(cm1 == -1)
+        {
+          cm1 = NCols-1;
+        }
+      }
+
+      if( RasterData[row][col] != NoDataValue)
+      {
+        total_weighting += central_pixel_weighting;
+        total_sum += central_pixel_weighting*RasterData[row][col];
+
+        // now go through all the other directions.
+        if (RasterData[row][cp1] != NoDataValue)
+        {
+          total_weighting +=1;
+          total_sum += RasterData[row][cp1];
+        }
+        if (RasterData[row][cm1] != NoDataValue)
+        {
+          total_weighting +=1;
+          total_sum += RasterData[row][cm1];
+        }
+        if (RasterData[rp1][col] != NoDataValue)
+        {
+          total_weighting +=1;
+          total_sum += RasterData[rp1][col];
+        }
+        if (RasterData[rm1][col] != NoDataValue)
+        {
+          total_weighting +=1;
+          total_sum += RasterData[rm1][col];
+        }
+      }
+      // Now update the array
+
+      new_data[row][col] = total_sum/total_weighting;
+    }
+  }
+
+  
+  // Step one, create donor "stack" etc. via FlowInfo
+  LSDRaster temp(NRows, NCols, XMinimum, YMinimum, DataResolution, NoDataValue, new_data, GeoReferencingStrings);  
+  return temp;
+}
+
+
+
+LSDRaster LSDRasterModel::basic_valley_fill_critical_slope(LSDRaster& S_c_raster, int contributing_pixel_threshold)
+{
+  
+  Array2D<float> zeta=RasterData.copy();
+  float sqrt2 = sqrt(2);
+
+  // Step one, create donor "stack" etc. via FlowInfo
+  LSDRaster temp(NRows, NCols, XMinimum, YMinimum, DataResolution, NoDataValue, zeta, GeoReferencingStrings);  
+
+  // We need to fill the raster so we don't get internally drained catchments
+  cout << "I'm getting the flow info" << endl;
+  float slope_for_fill = 0.0001;
+  LSDRaster filled = temp.fill(slope_for_fill);
+  LSDFlowInfo flow(boundary_conditions, filled);
+  int contributing_pixels;
+
+  vector<int> S_vec = flow.get_SVector();
+
+  // also I want to keep track on which nodes have been processed
+  map<pair<int,int> ,bool> has_been_proc;
+  //And a map that check whether a node is in the river
+  map<pair<int,int> ,bool> is_river;
+  // This tests the exsitence of the node in a stack
+  map<pair<int,int> ,bool> is_in_DEM;
+  // Let's initialise my output as well
+  Array2D<float> output(NRows,NCols, NoDataValue);
+  // Before processing my nodes, I need to set up my priority queue
+  // And set 2 priority queues that will work together
+  priority_queue< MyNode, vector<MyNode>, greater<MyNode> > PriorityQueue_1, PriorityQueue_2;
+  // I'll need a switch to know which PQ is getting filled
+  int working_PQ = 1;
+  
+  
+  // let's go through the stack and get the river nodes
+  // I'll fill my PQ1 with the river_nodes
+  cout << "Filling the priority queues. The no data value is: " << NoDataValue <<endl;
+  //cout << "NRows: " << NRows << " and NCols: " << NCols << endl;
+  int this_row,this_col, current_node;
+  for(size_t i =0; i<S_vec.size(); i++)
+  {
+    // Row and col of the next element from the stack, starting from the baselevel of the given stack
+    current_node = S_vec[i];
+    flow.retrieve_current_row_and_col(current_node,this_row,this_col);
+    
+    // Topo and drainage area stack
+    float this_elev =temp.get_data_element(this_row,this_col);
+    contributing_pixels = flow.retrieve_contributing_pixels_of_node(current_node);
+    pair<int,int> this_node = {this_row, this_col};
+
+    is_in_DEM[this_node] = true;
+    
+    // Initialising my node
+    MyNode this_MyNode;
+    this_MyNode.ID = this_node;
+    this_MyNode.elevation = this_elev;
+
+    // is it a river
+    if(contributing_pixels>=contributing_pixel_threshold)
+    {
+      PriorityQueue_1.push(this_MyNode);
+      is_river[this_node] = true;
+      output[this_row][this_col] = this_elev;
+      has_been_proc[this_node] = true;
+    }
+    else
+    {
+      is_river[this_node] = false;
+      output[this_row][this_col] = NoDataValue;
+      has_been_proc[this_node] = false;
+    }
+  }
+  // std::cout << "is empty??"
+  
+  //cout << "Now it is time to create the slopes" << endl;
+  // Alright, I have my list of node ordered by elevation (thanks to fastscape and stuff)
+  while(PriorityQueue_1.empty() == false || PriorityQueue_2.empty() == false)
+  {
+    //cout << "Whohoo, starting with the priority queueueueueue" << endl;
+    // I'll want my node
+    pair<int,int> this_node;
+    MyNode this_MyNode;
+    if(working_PQ == 1)
+    {
+      this_MyNode = PriorityQueue_1.top();
+      PriorityQueue_1.pop();
+    }
+    else
+    {
+      this_MyNode = PriorityQueue_2.top();
+      PriorityQueue_2.pop();
+    }
+    this_node = this_MyNode.ID;
+    float this_elevation = this_MyNode.elevation;
+    int this_row = this_node.first;
+    int this_col = this_node.second;
+    // let me go through the neighbors
+    //cout << "z: " << this_elevation << " r: " << this_row << " c: " << this_col << endl;
+    vector<int> row_neighbors = {this_row-1,this_row,this_row+1};
+    vector<int> col_neighbors = {this_col-1,this_col,this_col+1};
+    for(int nR=0;nR<int(row_neighbors.size());nR++)
+    {
+      for(int nC=0;nC<int(col_neighbors.size());nC++)
+      {
+        // ignore that node
+        if(nR ==1 && nC == 1)
+        {
+          continue;
+        }
+        // getting this neighbor
+        int neighb_row = row_neighbors[nR];
+        int neighb_col = col_neighbors[nC];
+
+
+
+        // Make sure it is not at the edge of the DEM
+        if (neighb_row >= 0 && neighb_row <= NRows - 1 && neighb_col >= 0 && neighb_col <= NCols - 1)
+        {
+
+    
+          //cout << "nr: " << neighb_row << " nc: " << neighb_col << endl;
+          pair<int,int> nenode = {neighb_row,neighb_col};
+
+          if(not is_in_DEM[nenode])
+          {
+            //cout << "Hey this neighbour isn't in the DEM" << endl;
+          }  
+          else
+          {
+            if(not is_river[nenode] && not has_been_proc[nenode])
+            {
+              // If we got this far it means the node needs to be processed. 
+              float dx;
+              if((nR == 0 || nR == 2) && (nC == 0 || nC == 2))
+              {
+                dx = sqrt2*DataResolution;
+              }
+              else
+              {
+                dx = DataResolution;
+              }
+              // backcalculating the slope
+              //cout << "I'm getting a slope at r: " << neighb_row << " c: " << neighb_col << " elev: " << this_elevation << endl; 
+              float new_elev = S_c_raster.get_data_element(neighb_row,neighb_col) * dx + this_elevation;
+              //cout << "1..";
+              output[neighb_row][neighb_col] = new_elev;
+              //cout << "2..";
+              has_been_proc[nenode] = true;
+              //cout << "done" <<endl;
+              MyNode nextnode; 
+              nextnode.ID = nenode;
+              nextnode.elevation = new_elev;
+              if(working_PQ == 1)
+              {
+                PriorityQueue_2.push(nextnode);
+                // std::cout << "didd" << std::endl;
+              }
+              else
+              {
+                PriorityQueue_1.push(nextnode);
+              }
+            }       
+          }
+        }
+      }
+      if(working_PQ == 1 && PriorityQueue_1.empty() == true)
+      {
+        working_PQ = 2;
+      }
+      else if(working_PQ == 2 && PriorityQueue_2.empty() == true)
+      {
+        working_PQ = 1;
+      }
+    }
+  }
+  // for(size_t i=0)
+
+  cout << "Right, all finished. Generating the output raster" << endl;
+  LSDRaster output_raster(NRows, NCols, XMinimum, YMinimum, DataResolution, NoDataValue, output, GeoReferencingStrings);  
+  return output_raster;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+// Calculates a new elevation raster based on instantaneous tilting of the model
+// by a defined tilt angle.
+// Need to specify: angle = tilt angle
+//                  tilt_boundary = which boundary is the model tilted from. N, S, E, or W
+// FJC 11/03/19
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+void LSDRasterModel::instantaneous_tilt(float angle, string tilt_boundary)
+{
+  Array2D<float> elev = RasterData.copy();
+  Array2D<float> new_elev(NRows, NCols, NoDataValue);
+
+  // loop through each possible tilt direction and get the new array of elevations
+  // after tilting
+  if (tilt_boundary == "N")  // north is tilt boundary - max elevation at the S
+  {
+    for (int i = 0; i < NRows; i++)
+    {
+      for (int j = 0; j < NCols; j++)
+      {
+        // first row stays at same elevation
+        if (i == 0) { new_elev[i][j] = elev[i][j]; }
+        // other rows, calculate based on angle
+        else
+        {
+          float this_elev = elev[i][j];
+          float length = (i + 1) * DataResolution;
+          new_elev[i][j] = (length * tan(angle)) + this_elev;
+          cout << "old elev: " << this_elev << " new elev: " << (length * tan(angle)) + this_elev << endl;
+        }
+      }
+    }
+  }
+  else if (tilt_boundary == "S")  // south is tilt boundary - max elevation at the N
+  {
+    for (int i = 0; i < NRows; i++)
+    {
+      for (int j = 0; j < NCols; j++)
+      {
+        // last row stays at same elevation
+        if (i == NRows-1) { new_elev[i][j] = elev[i][j]; }
+        // other rows, calculate based on angle
+        else
+        {
+          float this_elev = elev[i][j];
+          float length = (NRows - i) * DataResolution;
+          new_elev[i][j] = (length * tan(angle)) + this_elev;
+          cout << "old elev: " << this_elev << " new elev: " << (length * tan(angle)) + this_elev << endl;
+        }
+      }
+    }
+  }
+  else if (tilt_boundary == "E")  // east is tilt boundary - max elevation at the W
+  {
+    for (int i = 0; i < NRows; i++)
+    {
+      for (int j = 0; j < NCols; j++)
+      {
+        // last col stays at same elevation
+        if (j == NCols-1) { new_elev[i][j] = elev[i][j]; }
+        // other cols, calculate based on angle
+        else
+        {
+          float this_elev = elev[i][j];
+          float length = (NCols - i) * DataResolution;
+          new_elev[i][j] = (length * tan(angle)) + this_elev;
+          cout << "old elev: " << this_elev << " new elev: " << (length * tan(angle)) + this_elev << endl;
+        }
+      }
+    }
+  }
+  else if (tilt_boundary == "W")  // west is tilt boundary - max elevation at the E
+  {
+    for (int i = 0; i < NRows; i++)
+    {
+      for (int j = 0; j < NCols; j++)
+      {
+        // first col stays at same elevation
+        if (j == 0) { new_elev[i][j] = elev[i][j]; }
+        // other cols, calculate based on angle
+        else
+        {
+          float this_elev = elev[i][j];
+          float length = (j + 1) * DataResolution;
+          new_elev[i][j] = (length * tan(angle)) + this_elev;
+          cout << "old elev: " << this_elev << " new elev: " << (length * tan(angle)) + this_elev << endl;
+        }
+      }
+    }
+  }
+  else
+  {
+    cout << "Warning - you haven't set your boundary to N, W, E, or S. Returning the original raster" << endl;
+    new_elev = elev;
+  }
+
+  // set the model to the array of new elevations
+  RasterData = new_elev;
+}
+
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 // This is the component of the model that is solved using the
 // FASTSCAPE algorithm of Willett and Braun (2013)
@@ -4437,7 +5549,7 @@ void LSDRasterModel::fluvial_incision( void )
 
 
   // this is only for bug checking
-  if (not quiet && name == "debug" && NRows <= 10 && NCols <= 10)
+  if (quiet == false && name == "debug" && NRows <= 10 && NCols <= 10)
   {
     cout << "Drainage area: " << endl;
     for (int i=0; i<NRows*NCols; ++i)
@@ -4445,7 +5557,7 @@ void LSDRasterModel::fluvial_incision( void )
       drainageArea = flow.retrieve_contributing_pixels_of_node(i) *  DR2;
       cout << drainageArea << " ";
       if (((i+1)%NCols) == 0)
-  cout << endl;
+      cout << endl;
     }
   }
 
@@ -4461,7 +5573,7 @@ void LSDRasterModel::fluvial_incision( void )
     drainageArea = flow.retrieve_contributing_pixels_of_node(node) *  DR2;
 
     // some code for debugging
-    if (not quiet && name == "debug" && NRows <= 10 && NCols <= 10)
+    if (quiet == false && name == "debug" && NRows <= 10 && NCols <= 10)
     {
       cout << row << ", " << col << ", " << receiver_row << ", " << receiver_col << endl;
       cout << flow.retrieve_flow_length_code_of_node(node) << endl;
@@ -4526,7 +5638,7 @@ void LSDRasterModel::fluvial_incision( void )
       do
       {
         slope = (new_zeta - zeta[receiver_row][receiver_col]) / dx;
-        
+
         if(slope < 0)
         {
           epsilon = 0;
@@ -4537,7 +5649,7 @@ void LSDRasterModel::fluvial_incision( void )
                (1 + streamPowerFactor * (n/dx) * pow(slope, n-1));
         }
         new_zeta -= epsilon;
-        
+
         // This limits the number of iterations
         iter_count++;
         if(iter_count > 100)
@@ -4575,12 +5687,12 @@ void LSDRasterModel::fluvial_incision_with_uplift( void )
   LSDRaster temp(NRows, NCols, XMinimum, YMinimum, DataResolution, NoDataValue, zeta);
   //cout << "The nodatavalue is: " << NoDataValue << endl;
   LSDFlowInfo flow(boundary_conditions, temp);
-  
+
   //for(int i = 0; i<4; i++)
   //{
-  //  cout << "bc["<<i<<"]: " << boundary_conditions[i] << endl; 
+  //  cout << "bc["<<i<<"]: " << boundary_conditions[i] << endl;
   //}
-  
+
   vector <int> nodeList = flow.get_SVector();
   int numNodes = nodeList.size();
   int node, row, col, receiver, receiver_row, receiver_col;
@@ -4595,7 +5707,7 @@ void LSDRasterModel::fluvial_incision_with_uplift( void )
 
 
   // this is only for bug checking
-  if (not quiet && name == "debug" && NRows <= 10 && NCols <= 10)
+  if (quiet == false && name == "debug" && NRows <= 10 && NCols <= 10)
   {
     cout << "Drainage area: " << endl;
     for (int i=0; i<NRows*NCols; ++i)
@@ -4619,7 +5731,7 @@ void LSDRasterModel::fluvial_incision_with_uplift( void )
     drainageArea = flow.retrieve_contributing_pixels_of_node(node) *  DR2;
 
     // some code for debugging
-    if (not quiet && name == "debug" && NRows <= 10 && NCols <= 10)
+    if (quiet == false && name == "debug" && NRows <= 10 && NCols <= 10)
     {
       cout << row << ", " << col << ", " << receiver_row << ", " << receiver_col << endl;
       cout << flow.retrieve_flow_length_code_of_node(node) << endl;
@@ -4663,7 +5775,7 @@ void LSDRasterModel::fluvial_incision_with_uplift( void )
                           + zeta[receiver_row][receiver_col]*streamPowerFactor
                           + timeStep*U) /
                          (1 + streamPowerFactor);
-                         
+
         if(zeta[row][col] < zeta[receiver_row][receiver_col])
         {
           //cout << "Warning, overexcavation. Setting to minimum slope." << endl;
@@ -4701,7 +5813,7 @@ void LSDRasterModel::fluvial_incision_with_uplift( void )
       do
       {
         slope = (new_zeta - zeta[receiver_row][receiver_col]) / dx;
-        
+
         if(slope < 0)
         {
           epsilon = 0;
@@ -4716,17 +5828,17 @@ void LSDRasterModel::fluvial_incision_with_uplift( void )
         }
 
         new_zeta -= epsilon;
-        
+
         iter_count++;
         if(iter_count > 100)
         {
           //cout << "Too many iterations! epsilon is: " << abs(epsilon) << endl;
           epsilon = 0.5e-6;
         }
-        
+
       } while (abs(epsilon) > 1e-6);
       zeta[row][col] = new_zeta;
-      
+
       // check for overexcavation
       if(zeta[row][col] < zeta[receiver_row][receiver_col])
       {
@@ -4735,7 +5847,7 @@ void LSDRasterModel::fluvial_incision_with_uplift( void )
       }
     }
   }
-    
+
   //return LSDRasterModel(NRows, NCols, XMinimum, YMinimum, DataResolution, NoDataValue, zeta);
   this->RasterData = zeta.copy();
 
@@ -4760,12 +5872,12 @@ void LSDRasterModel::fluvial_incision_with_uplift_and_variable_K( LSDRaster& K_r
   LSDRaster temp(NRows, NCols, XMinimum, YMinimum, DataResolution, NoDataValue, zeta);
   //cout << "The nodatavalue is: " << NoDataValue << endl;
   LSDFlowInfo flow(boundary_conditions, temp);
-  
+
   //for(int i = 0; i<4; i++)
   //{
-  //  cout << "bc["<<i<<"]: " << boundary_conditions[i] << endl; 
+  //  cout << "bc["<<i<<"]: " << boundary_conditions[i] << endl;
   //}
-  
+
   vector <int> nodeList = flow.get_SVector();
   int numNodes = nodeList.size();
   int node, row, col, receiver, receiver_row, receiver_col;
@@ -4779,7 +5891,7 @@ void LSDRasterModel::fluvial_incision_with_uplift_and_variable_K( LSDRaster& K_r
 
 
   // this is only for bug checking
-  if (not quiet && name == "debug" && NRows <= 10 && NCols <= 10)
+  if (quiet == false && name == "debug" && NRows <= 10 && NCols <= 10)
   {
     cout << "Drainage area: " << endl;
     for (int i=0; i<NRows*NCols; ++i)
@@ -4803,7 +5915,7 @@ void LSDRasterModel::fluvial_incision_with_uplift_and_variable_K( LSDRaster& K_r
     drainageArea = flow.retrieve_contributing_pixels_of_node(node) *  DR2;
 
     // some code for debugging
-    if (not quiet && name == "debug" && NRows <= 10 && NCols <= 10)
+    if (quiet == false && name == "debug" && NRows <= 10 && NCols <= 10)
     {
       cout << row << ", " << col << ", " << receiver_row << ", " << receiver_col << endl;
       cout << flow.retrieve_flow_length_code_of_node(node) << endl;
@@ -4847,7 +5959,7 @@ void LSDRasterModel::fluvial_incision_with_uplift_and_variable_K( LSDRaster& K_r
                           + zeta[receiver_row][receiver_col]*streamPowerFactor
                           + timeStep*U) /
                          (1 + streamPowerFactor);
-                         
+
         if(zeta[row][col] < zeta[receiver_row][receiver_col])
         {
           zeta[row][col] = zeta[receiver_row][receiver_col]+(0.00001)*dx;
@@ -4880,7 +5992,7 @@ void LSDRasterModel::fluvial_incision_with_uplift_and_variable_K( LSDRaster& K_r
       do
       {
         slope = (new_zeta - zeta[receiver_row][receiver_col]) / dx;
-        
+
         if(slope < 0)
         {
           epsilon = 0;
@@ -4894,16 +6006,16 @@ void LSDRasterModel::fluvial_incision_with_uplift_and_variable_K( LSDRaster& K_r
         }
 
         new_zeta -= epsilon;
-        
+
         iter_count++;
         if(iter_count > 100)
         {
           epsilon = 0.5e-6;
         }
-        
+
       } while (abs(epsilon) > 1e-6);
       zeta[row][col] = new_zeta;
-      
+
       // check for overexcavation
       if(zeta[row][col] < zeta[receiver_row][receiver_col])
       {
@@ -4933,12 +6045,12 @@ void LSDRasterModel::fluvial_incision_with_variable_uplift_and_variable_K( LSDRa
   LSDRaster temp(NRows, NCols, XMinimum, YMinimum, DataResolution, NoDataValue, zeta);
   //cout << "The nodatavalue is: " << NoDataValue << endl;
   LSDFlowInfo flow(boundary_conditions, temp);
-  
+
   //for(int i = 0; i<4; i++)
   //{
-  //  cout << "bc["<<i<<"]: " << boundary_conditions[i] << endl; 
+  //  cout << "bc["<<i<<"]: " << boundary_conditions[i] << endl;
   //}
-  
+
   vector <int> nodeList = flow.get_SVector();
   int numNodes = nodeList.size();
   int node, row, col, receiver, receiver_row, receiver_col;
@@ -4952,7 +6064,7 @@ void LSDRasterModel::fluvial_incision_with_variable_uplift_and_variable_K( LSDRa
 
 
   // this is only for bug checking
-  if (not quiet && name == "debug" && NRows <= 10 && NCols <= 10)
+  if (quiet == false && name == "debug" && NRows <= 10 && NCols <= 10)
   {
     cout << "Drainage area: " << endl;
     for (int i=0; i<NRows*NCols; ++i)
@@ -4976,7 +6088,7 @@ void LSDRasterModel::fluvial_incision_with_variable_uplift_and_variable_K( LSDRa
     drainageArea = flow.retrieve_contributing_pixels_of_node(node) *  DR2;
 
     // some code for debugging
-    if (not quiet && name == "debug" && NRows <= 10 && NCols <= 10)
+    if (quiet == false && name == "debug" && NRows <= 10 && NCols <= 10)
     {
       cout << row << ", " << col << ", " << receiver_row << ", " << receiver_col << endl;
       cout << flow.retrieve_flow_length_code_of_node(node) << endl;
@@ -5020,7 +6132,7 @@ void LSDRasterModel::fluvial_incision_with_variable_uplift_and_variable_K( LSDRa
                           + zeta[receiver_row][receiver_col]*streamPowerFactor
                           + timeStep*U) /
                          (1 + streamPowerFactor);
-                         
+
         if(zeta[row][col] < zeta[receiver_row][receiver_col])
         {
           zeta[row][col] = zeta[receiver_row][receiver_col]+(0.00001)*dx;
@@ -5053,7 +6165,7 @@ void LSDRasterModel::fluvial_incision_with_variable_uplift_and_variable_K( LSDRa
       do
       {
         slope = (new_zeta - zeta[receiver_row][receiver_col]) / dx;
-        
+
         if(slope < 0)
         {
           epsilon = 0;
@@ -5067,16 +6179,16 @@ void LSDRasterModel::fluvial_incision_with_variable_uplift_and_variable_K( LSDRa
         }
 
         new_zeta -= epsilon;
-        
+
         iter_count++;
         if(iter_count > 100)
         {
           epsilon = 0.5e-6;
         }
-        
+
       } while (abs(epsilon) > 1e-6);
       zeta[row][col] = new_zeta;
-      
+
       // check for overexcavation
       if(zeta[row][col] < zeta[receiver_row][receiver_col])
       {
@@ -5103,12 +6215,12 @@ void LSDRasterModel::fluvial_incision_with_variable_uplift_and_variable_K_adapti
   LSDRaster temp(NRows, NCols, XMinimum, YMinimum, DataResolution, NoDataValue, zeta);
   //cout << "The nodatavalue is: " << NoDataValue << endl;
   LSDFlowInfo flow(boundary_conditions, temp);
-  
+
   //for(int i = 0; i<4; i++)
   //{
-  //  cout << "bc["<<i<<"]: " << boundary_conditions[i] << endl; 
+  //  cout << "bc["<<i<<"]: " << boundary_conditions[i] << endl;
   //}
-  
+
   vector <int> nodeList = flow.get_SVector();
   int numNodes = nodeList.size();
   int node, row, col, receiver, receiver_row, receiver_col;
@@ -5121,7 +6233,7 @@ void LSDRasterModel::fluvial_incision_with_variable_uplift_and_variable_K_adapti
   float DR2 = DataResolution*DataResolution;
 
   // this is only for bug checking
-  if (not quiet && name == "debug" && NRows <= 10 && NCols <= 10)
+  if (quiet == false && name == "debug" && NRows <= 10 && NCols <= 10)
   {
     cout << "Drainage area: " << endl;
     for (int i=0; i<NRows*NCols; ++i)
@@ -5133,20 +6245,20 @@ void LSDRasterModel::fluvial_incision_with_variable_uplift_and_variable_K_adapti
     }
   }
 
-  // We nest the main calculation routines in a logic statement that will 
+  // We nest the main calculation routines in a logic statement that will
   // recalculate everything at a smaller timestep if the model overexcavates
-  int timestep_iterator = 0;      // this checks how many times you have reduced the 
+  int timestep_iterator = 0;      // this checks how many times you have reduced the
                                   // timestep
   bool it_has_overexcavated;
   do
   {
     // reset the overexcavation switch
     it_has_overexcavated = false;
-    
-    // reset zeta to the old elevation. This wastes a bit of time but we need it 
+
+    // reset zeta to the old elevation. This wastes a bit of time but we need it
     // for the adaptive timestepping
     zeta=RasterData.copy();
-    
+
     // Calculate new heights
     for (int i=0; i<numNodes; ++i)
     {
@@ -5194,13 +6306,13 @@ void LSDRasterModel::fluvial_incision_with_variable_uplift_and_variable_K_adapti
                           + zeta[receiver_row][receiver_col]*streamPowerFactor
                           + timeStep*U) /
                          (1 + streamPowerFactor);
-          
+
           // check for overexcavation
           if(zeta[row][col] <= zeta[receiver_row][receiver_col])
           {
             //cout << "HEY HEY JABBA I found overexcavation!" << endl;
             it_has_overexcavated = true;
-            
+
             if (timestep_iterator> 100)
             {
               cout << "There is an overexcavation that has not  been fixed by a very small timestep." << endl;
@@ -5214,8 +6326,8 @@ void LSDRasterModel::fluvial_incision_with_variable_uplift_and_variable_K_adapti
               cout << "reciever term is: " << zeta[receiver_row][receiver_col]*streamPowerFactor << endl;
               exit(EXIT_FAILURE);
             }
-            
-            
+
+
           }
         }
       }
@@ -5245,7 +6357,7 @@ void LSDRasterModel::fluvial_incision_with_variable_uplift_and_variable_K_adapti
         do
         {
           slope = (new_zeta - zeta[receiver_row][receiver_col]) / dx;
-        
+
           if(slope < 0)
           {
             epsilon = 0;
@@ -5259,21 +6371,21 @@ void LSDRasterModel::fluvial_incision_with_variable_uplift_and_variable_K_adapti
           }
 
           new_zeta -= epsilon;
-        
+
           iter_count++;
           if(iter_count > 100)
           {
             epsilon = 0.5e-6;
-          } 
-        
+          }
+
         } while (abs(epsilon) > 1e-6);
         zeta[row][col] = new_zeta;
-      
+
         // check for overexcavation
         if(zeta[row][col] <= zeta[receiver_row][receiver_col])
         {
           it_has_overexcavated = true;
-          
+
           // kill the program if the number of overexcavation steps get too small
           if (timestep_iterator> 100)
           {
@@ -5284,7 +6396,7 @@ void LSDRasterModel::fluvial_incision_with_variable_uplift_and_variable_K_adapti
           }
         }
       }        // end logic for n not equal to one
-      
+
       if (it_has_overexcavated)
       {
         //cout << "Whoops I had an overexcavation! " << endl;
@@ -5297,7 +6409,7 @@ void LSDRasterModel::fluvial_incision_with_variable_uplift_and_variable_K_adapti
     }         // end logic for node loop
 
   } while ( it_has_overexcavated);
-  
+
   // if the model didn't overexcavate at all, then increase the timestep.
   //cout << "The timestep iterator is: " << timestep_iterator << endl;
   if(timestep_iterator ==0)
@@ -5308,7 +6420,7 @@ void LSDRasterModel::fluvial_incision_with_variable_uplift_and_variable_K_adapti
       timeStep = maxtimeStep;
     }
   }
-  
+
   this->RasterData = zeta.copy();
 
 }
@@ -5497,7 +6609,7 @@ void LSDRasterModel::wash_out( void )
 {
   // don't do anything if there is no hillslope or fluvial erosion,
   // or if the threshold drainage is less than zero
-  if (threshold_drainage < 0 || not hillslope || not fluvial)
+  if (threshold_drainage < 0 || hillslope == false || fluvial == false)
     return;
 
   // get the old elevations
@@ -5588,7 +6700,7 @@ void LSDRasterModel::flexural_isostasy( float alpha )
     root_depth = calculate_root();
     difference = root_depth - old_root;
 
-    if (not quiet && name == "debug" && NRows <= 10 && NCols<= 10)
+    if ( quiet == false && name == "debug" && NRows <= 10 && NCols<= 10)
     {
       cout << "Topography: " << endl;
     for (int i=0; i<NRows; ++i)
@@ -5655,7 +6767,7 @@ void LSDRasterModel::flexural_isostasy_alt( void )
   root_depth = calculate_root();
   difference = root_depth - old_root;
 
-  if (not quiet && name == "debug" && NRows <= 10 && NCols<= 10)
+  if (quiet == false && name == "debug" && NRows <= 10 && NCols<= 10)
   {
     cout << "Topography: " << endl;
   for (int i=0; i<NRows; ++i)
@@ -5893,7 +7005,7 @@ void LSDRasterModel::write_report( void )
   // check to see if enough time has elapsed to write the report
   if (reporting && current_time > report_delay)
   {
-    if (not outfile.is_open())
+    if ( outfile.is_open() == false)
     {
       // Headers
       outfile.open((report_name + "_report").c_str());
@@ -5915,7 +7027,7 @@ void LSDRasterModel::write_report( void )
       //outfile << "Drainage-500m2\t";
       outfile << endl;
     }
-    if (not recording)
+    if ( recording == false)
       check_recording();
     if (print_erosion_cycle)
       erosion_cycle_field = Array2D<float>(NRows, NCols, 0.0);
@@ -5940,7 +7052,7 @@ void LSDRasterModel::write_report( void )
       {
         erosion_cycle_field[i][j] += e;
       }
-      if (not is_base_level(i,j))
+      if ( is_base_level(i,j) == false)
       {
         erosion += e;
         ++n;
@@ -6000,7 +7112,7 @@ void LSDRasterModel::cycle_report( float elev, float relief0, float relief10)
   // There's got to be a better way to design this method, I don't like it
   static ofstream outfile;
   static int phase_pos = 1;
-  if ( not outfile.is_open() && reporting && current_time > report_delay)
+  if ( outfile.is_open() == false && reporting && current_time > report_delay)
   {
     outfile.open((report_name + "_cycle_report").c_str());
     outfile << name << endl;
@@ -6168,7 +7280,7 @@ void LSDRasterModel::print_average_erosion_and_apparent_erosion( int frame,
 
   static ofstream er_outfile;
   // Print the cosmo metadata
-  if (not er_outfile.is_open())
+  if (er_outfile.is_open() == false)
   {
     string metadata_fname =  name+".er_frame_metadata";
     cout << "Name of raster metadata file is: " <<  metadata_fname << endl;
@@ -6278,7 +7390,7 @@ void LSDRasterModel::print_column_erosion_and_apparent_erosion( int frame,
   // This if statement opens the file if it doesn't exist
   static ofstream er_outfile;
   // Print the cosmo metadata
-  if (not er_outfile.is_open())
+  if (er_outfile.is_open() == false)
   {
     string CRNdata_fname =  name+".CRN_frame_metadata";
     cout << "Name of CRN file is: " <<  CRNdata_fname << endl;
@@ -6356,7 +7468,7 @@ void LSDRasterModel::print_rasters( int frame )
   //cout << "input to sine wave: " << (current_time - time_delay - switch_delay) * 2 * PI / periodicity << endl;
   //cout << "Sin wave:" << sin( (current_time - time_delay - switch_delay) * 2 * PI / periodicity )  << endl;
   static ofstream outfile;
-  if (not outfile.is_open())
+  if ( outfile.is_open() == false)
   {
     string metadata_fname =  name+"._frame_metadata";
     cout << "Name of raster metadata file is: " <<  metadata_fname << endl;
@@ -6375,7 +7487,7 @@ void LSDRasterModel::print_rasters( int frame )
   outfile << get_K() << "\t";
   outfile << get_D() << "\t";
   outfile << erosion << "\t";
-  outfile << get_max_uplift() << "\t";
+  outfile << get_max_uplift(); // << "\t"; i think this make the output buggy, at least for me it sxrew up the csv file! - BG
   outfile << endl;
 
   map<string,string> GRS = get_GeoReferencingStrings();
@@ -6417,10 +7529,10 @@ void LSDRasterModel::print_rasters( int frame )
     ss << name << frame << "_sa";
     slope_area_data( name+"_sa");
   }
-  
-  
 
-  
+
+
+
 }
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
@@ -6436,7 +7548,7 @@ void LSDRasterModel::print_rasters_and_csv( int frame )
 
   cout << endl;
   static ofstream outfile;
-  if (not outfile.is_open())
+  if (outfile.is_open() == false)
   {
     string metadata_fname =  name+"_model_info.csv";
     cout << "Name of raster metadata file is: " <<  metadata_fname << endl;
@@ -6454,9 +7566,9 @@ void LSDRasterModel::print_rasters_and_csv( int frame )
   outfile << get_K() << ",";
   outfile << get_D() << ",";
   outfile << erosion << ",";
-  outfile << get_max_uplift() << ",";
+  outfile << get_max_uplift() ; // The last comma was generating bug here
   outfile << endl;
-
+  cout << "UPDATE_WARNING::I removed an extra comma from csv file here. It was creating a bug with pandas when reading csv (the python package, not the bamboo junkies). Let me know if it impacts your new outputs" << endl;
   map<string,string> GRS = get_GeoReferencingStrings();
 
   //cout << "Printing, print elevation is " << print_elevation
@@ -6465,7 +7577,10 @@ void LSDRasterModel::print_rasters_and_csv( int frame )
   stringstream ss;
   if (print_elevation)
   {
-    ss << name << frame;
+    if(frame >0 )
+      ss << name << frame;
+    else
+      ss << name << "_init";
     this->write_raster(ss.str(), outfile_format);
   }
   if (print_hillshade)
@@ -6496,7 +7611,7 @@ void LSDRasterModel::print_rasters_and_csv( int frame )
     ss << name << frame << "_sa";
     slope_area_data( name+"_sa");
   }
-  
+
 }
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
@@ -6598,7 +7713,7 @@ void LSDRasterModel::slope_area_data( string name )
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 void LSDRasterModel::slope_area_data( string fname, int slope_flag, int area_flag  )
 {
-  if (not quiet)
+  if ( quiet == false )
   {
     cout << "Printing slope-area data, filename is " << fname << endl;
   }
@@ -6618,7 +7733,7 @@ void LSDRasterModel::slope_area_data( string fname, int slope_flag, int area_fla
   Array2D<float> slope_array(NRows, NCols, 0.0);
   LSDRaster slope;
 
-  if (not quiet)
+  if (quiet == false)
   {
     cout << " LSDRasterModel::slope_area_data, slope_flag is: " << slope_flag
          << " and area_flag is: " << area_flag << endl;
@@ -6782,7 +7897,7 @@ void LSDRasterModel::slope_area_data( string fname, int slope_flag, int area_fla
     }
   }
 
-  if (not quiet)
+  if (quiet == false)
   {
     cout << "mean error % between predicted and measured slope is: " << err_tot/n_sa_nodes << endl;
   }
@@ -6859,7 +7974,7 @@ float LSDRasterModel::get_K( void )
 
   static bool copied = false;
 
-  if (K_mode == 3 && not copied)
+  if (K_mode == 3 && copied == false)
   {
     stringstream ss;
     ss << ".K_file_" << name << ".aux";
@@ -6919,7 +8034,7 @@ float LSDRasterModel::get_D( void )
   //cout << "initial steady state: " << initial_steady_state << endl;
   static bool copied = false;
 
-  if (D_mode == 3 && not copied)
+  if (D_mode == 3 && copied == false)
   {
     stringstream ss;
     ss << ".D_file_" << name << ".aux";
@@ -7023,7 +8138,7 @@ float LSDRasterModel::stream_K_fluv( void )
   static float upr_t = -99;
   static float lwr_t = 0;
   static ifstream strm;
-  if (not strm.is_open())
+  if (strm.is_open() == false)
   {
     stringstream ss;
     ss << ".K_file_" << name << ".aux";
@@ -7072,7 +8187,7 @@ float LSDRasterModel::stream_K_soil( void )
   static float upr_t = -99;
   static float lwr_t = 0;
   static ifstream strm;
-  if (not strm.is_open())
+  if (strm.is_open() == false)
   {
     stringstream ss;
     ss << ".D_file_" << name << ".aux";
