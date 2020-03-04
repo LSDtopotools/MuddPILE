@@ -26,7 +26,6 @@ SOURCES = MuddPILEdriver.cpp \
 		../LSDParticleColumn.cpp \
         ../LSDParameterParser.cpp \
 		../LSDCRNParameters.cpp
-SCRIPTS = animate.py
 OBJ = $(SOURCES:.cpp=.o)
 #LIBS = -lfftw3 -g -O0 -D_GLIBCXX_DEBUG
 LIBS = -lfftw3 -Wwrite-strings
