@@ -214,21 +214,21 @@ class LSDFlowInfo
   /// @date 13/11/2014
   bool check_if_point_is_in_raster(float X_coordinate,float Y_coordinate);
 
-  ///@brief Gives the reciever information for a given node.
+  ///@brief Gives the receiver information for a given node.
   ///@param current_node Integer
-  ///@param reveiver_node Empty integer to be assigned the index of the reciever
+  ///@param reveiver_node Empty integer to be assigned the index of the receiver
   ///node.
   ///@param receiver_row Empty integer to be assigned the row index of the
-  ///reciever node.
+  ///receiver node.
   ///@param receiver_col Empty integer to be assigned the column index of the
-  ///reciever node.
+  ///receiver node.
   /// @author SMM
   /// @date 01/016/12
   void retrieve_receiver_information(int current_node,int& reveiver_node, int& receiver_row,
                                              int& receiver_col);
-  ///@brief Gives the reciever information for a given node.
+  ///@brief Gives the receiver information for a given node.
   ///@param current_node Integer
-  ///@param reveiver_node Empty integer to be assigned the index of the reciever
+  ///@param reveiver_node Empty integer to be assigned the index of the receiver
   ///node.
   /// @author BG
   /// @date 06/01/2018
@@ -850,6 +850,12 @@ class LSDFlowInfo
   LSDRaster get_upslope_chi_from_multiple_starting_nodes(vector<int>& starting_nodes,
    float m_over_n, float A_0, float area_threshold, LSDRaster& Discharge);
 
+  /// @brief Same than above, but ignore the threshold. Discharge can be any raster custom drainage area/discharge-esc raster
+  /// @author BG/SMM
+  /// @date 16/10/2015
+  LSDRaster get_upslope_chi_from_multiple_starting_nodes_custom(vector<int>& starting_nodes,
+   float m_over_n, float A_0,  LSDRaster& Discharge);
+
   /// @brief This funtion gets all the upslope chi of a starting node (assuming
   ///  chi at starting node is 0) and returns a map
   /// @param starting_nodes an integer containing the node index
@@ -1432,7 +1438,7 @@ void get_nodeindices_from_csv(string csv_filename, vector<int>& NIs, vector<floa
   /// Nodes with flow direction of -1 drain to themselvs and are base level/sink nodes.
   Array2D<int> FlowDirection;
 
-  /// @brief A code to denote the flow length from the node to its reciever node.
+  /// @brief A code to denote the flow length from the node to its receiver node.
   /// <b>Each node has one and only one receiver.</b>
   /// \n\n
   /// 0 == no receiver/self receiver (base level) \n

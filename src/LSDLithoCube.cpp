@@ -838,24 +838,55 @@ void LSDLithoCube::fill_strati_to_K_map() {
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 void LSDLithoCube::hardcode_fill_strati_to_K_map() {
 
+  // SMM I have updated this with Andreas' codes on 23/03/2020
+  // This is from the lithocode strigraphy table:
+  // Strati	Erod_Class
+  //0	-1
+  //1	0
+  //2	2
+  //3	2
+  //4	2
+  //5	3
+  //6	2
+  //7	2
+  //8	3
+  //9	2
+  //10	2
+  //11	1
+  //12	1
+  //13	3
+  //14	2
+  //15	3
+  //-99999	2
+
+  // And this is from Andreas' email
+  // -	1: SC = 0.21
+  // -	2: SC = 0.27
+  // -	3 and 4: SC = 0.45
+
+  // -	1: K = 2.0 x 10e-6
+  // -	2: K = 1.5 x 10e-6
+  // -	3 and 4: K = 1.0 x 10e-6
+
+
   //StratiToK[0] = -9999;
-  StratiToK[0] = 0.000001; //Slightly dodgy way to ensure erosion still happens when we are above the lithocube surface
+  StratiToK[0] = 0.000003; //Slightly dodgy way to ensure erosion still happens when we are above the lithocube surface
   StratiToK[1] = 0.000003;
-  StratiToK[2] = 0.000001;
-  StratiToK[3] = 0.000001;
-  StratiToK[4] = 0.000001;
-  StratiToK[5] = 0.000002;
-  StratiToK[6] = 0.000001;
-  StratiToK[7] = 0.000001;
-  StratiToK[8] = 0.000002;
-  StratiToK[9] = 0.000003;
-  StratiToK[10] = 0.000001;
-  StratiToK[11] = 0.0000015;
-  StratiToK[12] = 0.0000015;
-  StratiToK[13] = 0.000002;
-  StratiToK[14] = 0.000001;
-  StratiToK[15] = 0.000002;
-  StratiToK[-9999] = 0.000001;
+  StratiToK[2] = 0.0000015;
+  StratiToK[3] = 0.0000015;
+  StratiToK[4] = 0.0000015;
+  StratiToK[5] = 0.000001;
+  StratiToK[6] = 0.0000015;
+  StratiToK[7] = 0.0000015;
+  StratiToK[8] = 0.000001;
+  StratiToK[9] = 0.0000015;
+  StratiToK[10] = 0.0000015;
+  StratiToK[11] = 0.000002;
+  StratiToK[12] = 0.000002;
+  StratiToK[13] = 0.000001;
+  StratiToK[14] = 0.0000015;
+  StratiToK[15] = 0.000001;
+  StratiToK[-9999] = 0.0000015;
 
 
   for(auto it = StratiToK.begin(); it != StratiToK.end(); ++it)
@@ -873,24 +904,54 @@ void LSDLithoCube::hardcode_fill_strati_to_K_map() {
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 void LSDLithoCube::hardcode_fill_strati_to_Sc_map() {
 
+  // SMM I have updated this with Andreas' codes on 23/03/2020
+  // This is from the lithocode strigraphy table:
+  // Strati	Erod_Class
+  //0	-1
+  //1	0
+  //2	2
+  //3	2
+  //4	2
+  //5	3
+  //6	2
+  //7	2
+  //8	3
+  //9	2
+  //10	2
+  //11	1
+  //12	1
+  //13	3
+  //14	2
+  //15	3
+  //-99999	2
+
+  // And this is from Andreas' email
+  // -	1: SC = 0.21
+  // -	2: SC = 0.27
+  // -	3 and 4: SC = 0.45
+
+  // -	1: K = 2.0 x 10e-6
+  // -	2: K = 1.5 x 10e-6
+  // -	3 and 4: K = 1.0 x 10e-6
+
   //StratiToSc[0] = -9999;
-  StratiToSc[0] = 0.45; //Slightly dodgy way to ensure erosion still happens when we are above the lithocube surface
+  StratiToSc[0] = 0.21; //Slightly dodgy way to ensure erosion still happens when we are above the lithocube surface
   StratiToSc[1] = 0.21;
-  StratiToSc[2] = 0.45;
-  StratiToSc[3] = 0.45;
-  StratiToSc[4] = 0.45;
-  StratiToSc[5] = 0.21;
-  StratiToSc[6] = 0.45;
-  StratiToSc[7] = 0.45;
-  StratiToSc[8] = 0.21;
-  StratiToSc[9] = 0.45;
-  StratiToSc[10] = 0.45;
-  StratiToSc[11] = 0.27;
-  StratiToSc[12] = 0.27;
-  StratiToSc[13] = 0.21;
-  StratiToSc[14] = 0.45;
-  StratiToSc[15] = 0.21;
-  StratiToSc[-9999] = 0.45;
+  StratiToSc[2] = 0.27;
+  StratiToSc[3] = 0.27;
+  StratiToSc[4] = 0.27;
+  StratiToSc[5] = 0.45;
+  StratiToSc[6] = 0.27;
+  StratiToSc[7] = 0.27;
+  StratiToSc[8] = 0.45;
+  StratiToSc[9] = 0.27;
+  StratiToSc[10] = 0.27;
+  StratiToSc[11] = 0.21;
+  StratiToSc[12] = 0.21;
+  StratiToSc[13] = 0.45;
+  StratiToSc[14] = 0.27;
+  StratiToSc[15] = 0.45;
+  StratiToSc[-9999] = 0.27;
 
 
   for(auto it = StratiToSc.begin(); it != StratiToSc.end(); ++it)
