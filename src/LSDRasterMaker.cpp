@@ -256,7 +256,9 @@ void LSDRasterMaker::impose_channels(LSDSpatialCSVReader& source_points_data)
   int row,col;
   for(int i = 0; i< int(ni.size()); i++)
   {
+    
     flow.retrieve_current_row_and_col( ni[i], row, col);
+    // cout << "I am in row " << row << " and col " << col << endl;
     zeta[row][col] = elev[i];
   }
 

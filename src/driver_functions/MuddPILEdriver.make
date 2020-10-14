@@ -11,6 +11,7 @@ SOURCES = MuddPILEdriver.cpp \
 		../LSDIndexRaster.cpp \
 		../LSDShapeTools.cpp \
 		../LSDRaster.cpp \
+		../LSDBasin.cpp \
 		../LSDRasterModel.cpp \
 		../LSDStatsTools.cpp \
 		../LSDFlowInfo.cpp \
@@ -19,6 +20,8 @@ SOURCES = MuddPILEdriver.cpp \
         ../LSDIndexChannel.cpp \
         ../LSDMostLikelyPartitionsFinder.cpp \
 		../LSDParticle.cpp \
+		../LSDChiNetwork.cpp \
+		../LSDChiTools.cpp \
         ../LSDRasterInfo.cpp \
         ../LSDSpatialCSVReader.cpp \
         ../LSDRasterMaker.cpp \

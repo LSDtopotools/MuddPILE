@@ -53,6 +53,7 @@
 #include "../LSDSpatialCSVReader.hpp"
 #include "../LSDLithoCube.hpp"
 #include "../LSDRaster.hpp"
+#include "../LSDChiTools.hpp"
 #include "../LSDIndexRaster.hpp"
 using namespace std;
 
@@ -108,6 +109,8 @@ int main (int nNumberofArgs,char *argv[])
   float_default_map["min_slope_for_fill"] = 0.0001;
   bool_default_map["remove_seas"] = true; // elevations above minimum and maximum will be changed to nodata
   bool_default_map["print_raster_without_seas"] = false;
+
+  bool_default_map["convert_intitial_raster_to_diamond_square_fractal"] = false;
 
   // Some logi for filling rasters that are being loaded
   bool_default_map["carve_before_fill"] = false; // Implements a carving algorithm
@@ -184,6 +187,14 @@ int main (int nNumberofArgs,char *argv[])
   string_default_map["variable_U_name"] = "variable_U";
   string_default_map["fixed_channel_csv_name"] = "single_channel_nodes";  // This contains the fixed channel data
 
+  bool_default_map["only_test_single_channel"] = false;
+  bool_default_map["fixed_channel_dig_and_slope"] = false;
+  float_default_map["single_channel_drop"] = 0;
+  float_default_map["single_channel_dig"] = 0.01;
+  string_default_map["single_channel_fd_string"] = "flow distance(m)";
+  string_default_map["single_channel_elev_string"] = "elevation(m)";
+  string_default_map["test_single_channel_name"] = "test_single_channel";
+
   // Even more complex snapping
   bool_default_map["snap_to_steady_variable_variable_K_variable_U_use_LithoCube"] = false;
 
@@ -196,6 +207,19 @@ int main (int nNumberofArgs,char *argv[])
   bool_default_map["cycle_hillslope_snapping"] = false;
   int_default_map["snapping_hillslope_cycles"] = 1;
   int_default_map["snap_hillslope_print_rate"] = 10;     // how frequently the snapping is printed in terms of snap cycles  
+
+  // Snapping if you use the initial raster as a lid so that
+  // the snapped landscape cannot go above the current surface
+  bool_default_map["use_initial_topography_as_max_elevation"] = false;
+
+  // This is for printing of the channel network
+  bool_default_map["print_initial_channel_network"] = false;
+  bool_default_map["print_final_channel_network"] = false;
+
+  bool_default_map["impose_single_channel_printing"] = true;
+  bool_default_map["nodata_single_channel_printing"] = false;
+
+  bool_default_map["convert_csv_to_geojson"] = false;
 
   // This is for the critical slope
   float_default_map["rudimentary_critical_slope"] = 0.8;
@@ -299,17 +323,24 @@ int main (int nNumberofArgs,char *argv[])
   int_default_map["tilt_print_interval"] = 150;
 
   // Various options to load and process lithologic data
-  bool_default_map["load_lithology"] = false;
   bool_default_map["only_test_lithology"] = false;
   string_default_map["vo_filename"] = "test.vo";
   string_default_map["vo_asc_filename"] = "test.asc";
-  string_default_map["lookup_filename"] = "lookup_table_strati_K.csv";
   bool_default_map["print_K_raster"] = false;
   bool_default_map["print_lithocode_raster"] = false;
 
+  // options for loading lookup tables
+  bool_default_map["load_lithocode_to_K_csv"] = false;
+  bool_default_map["load_lithocode_to_Sc_csv"] = false;
+  string_default_map["lookup_filename_K"] = "lookup_table_strati_K.csv";
+  string_default_map["lookup_filename_Sc"] = "lookup_table_strati_Sc.csv";
+
+  // option to have forbidden lithocodes
+  string_default_map["forbidden_lithocodes"] = "NULL";
 
   //Option to adjust elevation of raster before lithocube snapping
   int_default_map["elevation_change"] = 0;
+
 
 
   // Use the parameter parser to get the maps of the parameters required for the analysis
@@ -318,6 +349,22 @@ int main (int nNumberofArgs,char *argv[])
   map<string,int> this_int_map = LSDPP.get_int_parameters();
   map<string,bool> this_bool_map = LSDPP.get_bool_parameters();
   map<string,string> this_string_map = LSDPP.get_string_parameters();
+
+  list<int> forbidden_lithocodes;
+  if (this_string_map["forbidden_lithocodes"] != "NULL")
+  {
+    string this_key = "forbidden_lithocodes";
+    vector<int> temp_forbidden_codes;
+    temp_forbidden_codes = LSDPP.parse_int_vector(this_key);
+
+    cout << "Reading forbidden lithocodes. They are: " << endl;
+    for (size_t i = 0; i<temp_forbidden_codes.size(); i++)
+    {
+      forbidden_lithocodes.push_back(temp_forbidden_codes[i]);
+      cout << temp_forbidden_codes[i] << endl;
+    }
+  }
+
 
   // Now print the parameters for bug checking
   LSDPP.print_parameters();
@@ -387,13 +434,30 @@ int main (int nNumberofArgs,char *argv[])
     LSDLC.impose_georeferencing_UTM(UTM_zone, NorS);
 
     
-
-    // test ingesting strati to K lookup table
-    // cout << "I will now ingest the lookup table.";
-    // string this_lookup_table = DATA_DIR+this_string_map["lookup_filename"];
-    // LSDLC.read_strati_to_K_csv(this_lookup_table);
-
-    LSDLC.hardcode_fill_strati_to_K_map();
+    // Loading lithocode
+    if( this_bool_map["load_lithocode_to_K_csv"])
+    {   
+      string this_lookup_table_K = DATA_DIR+this_string_map["lookup_filename_K"];
+      cout << "I am going to load a lookup table for K" << endl;
+      cout << "The filename is: " << this_lookup_table_K << endl;
+      LSDLC.read_strati_to_K_csv(this_lookup_table_K);
+    }
+    else
+    {
+      LSDLC.hardcode_fill_strati_to_K_map();  
+    }  
+    // Let's create the map of stratigraphy codes and K values    
+    if( this_bool_map["load_lithocode_to_Sc_csv"])
+    {   
+      string this_lookup_table_Sc = DATA_DIR+this_string_map["lookup_filename_Sc"];
+      cout << "I am going to load a lookup table for Sc" << endl;
+      cout << "The filename is: " << this_lookup_table_Sc << endl;
+      LSDLC.read_strati_to_Sc_csv(this_lookup_table_Sc);
+    }
+    else
+    {
+      LSDLC.hardcode_fill_strati_to_Sc_map();  
+    }  
 
     // // test printing of a layer
     // string test_layer_name = DATA_DIR+DEM_ID+"_Layer61";
@@ -405,18 +469,26 @@ int main (int nNumberofArgs,char *argv[])
 
     string lithocodes_raster_name = DATA_DIR+OUT_ID+"_LithoCodes";
     string test_K_raster_name = DATA_DIR+OUT_ID+"_KRasterLSDLC";
+    string test_Sc_raster_name = DATA_DIR+OUT_ID+"_ScRasterLSDLC";
 
     // LSDLC.write_litho_raster_from_elevations(elev_raster, test_litho_raster_name, "bil");
     cout << "Getting the lithology codes" << endl;
-    LSDIndexRaster lithocodes_index_raster = LSDLC.get_lithology_codes_from_raster(elev_raster);
+    LSDIndexRaster lithocodes_index_raster = LSDLC.get_lithology_codes_from_raster(elev_raster,forbidden_lithocodes);
     LSDRaster lithocodes_raster(lithocodes_index_raster);
     cout << "Printing a lithocodes raster" << endl;
     lithocodes_raster.write_raster(lithocodes_raster_name, "bil");    
     cout << "Converting the litho codes to K values" << endl;
-    LSDRaster K_raster_from_lithocube = LSDLC.index_to_K(lithocodes_index_raster, 0.000001);
+    LSDRaster K_raster_from_lithocube = LSDLC.index_to_K(lithocodes_index_raster, 0.000003);
+    cout << "Converting the litho codes to Sc values" << endl;
+    LSDRaster Sc_raster_from_lithocube = LSDLC.index_to_Sc(lithocodes_index_raster, 0.21);
+
     cout << "Printing a K raster" << endl;
     K_raster_from_lithocube.write_raster(test_K_raster_name, "bil");
     cout << "Wrote a K raster for you" << endl;
+
+    cout << "Printing an Sc raster" << endl;
+    Sc_raster_from_lithocube.write_raster(test_Sc_raster_name, "bil");
+    cout << "Wrote an Sc raster for you" << endl;
 
     //LSDLC.get_K_raster_from_raster(elev_raster);
 
@@ -434,6 +506,7 @@ int main (int nNumberofArgs,char *argv[])
   // fixed rows and columns. If you do load a raster it will override any
   // instructions about NRows, NCols, and DataResolution
   //============================================================================
+  LSDRaster InitialRaster;
   bool create_initial_surface = false;
   if(this_bool_map["read_initial_raster"])
   {
@@ -465,6 +538,7 @@ int main (int nNumberofArgs,char *argv[])
           temp_raster.write_raster(this_raster_name,raster_ext);
         }
       }
+      InitialRaster = temp_raster;
 
       map<string,string> GRS = temp_raster.get_GeoReferencingStrings();
       string CS = GRS["ENVI_coordinate_system"];
@@ -503,12 +577,139 @@ int main (int nNumberofArgs,char *argv[])
         }
       }
 
+      // This is a testing routine for the single channel
+      if(this_bool_map["only_test_single_channel"])
+      {
+        cout << "Let me test the single channel modification routines." << endl;
+        string fd_column_name = this_string_map["single_channel_fd_string"];
+        string elevation_column_name = this_string_map["single_channel_elev_string"];
+
+        LSDRasterInfo RI(filled_topography);
+        // Get the latitude and longitude
+        cout << "I am reading points from the file: "+ this_string_map["fixed_channel_csv_name"] << endl;
+        LSDSpatialCSVReader single_channel_data( RI, (DATA_DIR+this_string_map["fixed_channel_csv_name"]) );
+        single_channel_data.print_data_map_keys_to_screen();
+
+        single_channel_data.data_column_add_float(elevation_column_name, -this_float_map["single_channel_drop"]);
+        single_channel_data.enforce_slope(fd_column_name, elevation_column_name, this_float_map["min_slope_for_fill"]);
+        single_channel_data.print_data_to_csv(this_string_map["test_single_channel_name"]);
+
+        single_channel_data.print_row_and_col_to_csv("check_r_and_c.csv");
+
+
+
+
+        exit(0);
+
+      }
+
       // Print the fill raster if you want it
       if (this_bool_map["print_fill_raster"])
       {
         cout << "Let me print the fill raster for you."  << endl;
         string filled_raster_name = OUT_DIR+OUT_ID+"_Fill";
         filled_topography.write_raster(filled_raster_name,raster_ext);
+      }
+
+      // This prints the channel network. Uses the chi tool so that we have the source pixels
+      // As a column in the extraction
+      if (this_bool_map["print_initial_channel_network"])
+      {
+        if (this_bool_map["write_hillshade"])
+        {
+          cout << "Let me print the hillshade of the initial map for you. " << endl;
+          float hs_azimuth = 315;
+          float hs_altitude = 45;
+          float hs_z_factor = 1;
+          LSDRaster hs_raster = filled_topography.hillshade(hs_altitude,hs_azimuth,hs_z_factor);
+
+          string hs_fname = OUT_DIR+OUT_ID+"_hs";
+          hs_raster.write_raster(hs_fname,raster_ext);
+        }
+        
+        cout << "\t Flow routing..." << endl;
+        // get a flow info object
+        LSDFlowInfo FlowInfo(boundary_conditions,filled_topography);
+
+        // calculate the flow accumulation
+        cout << "\t Calculating flow accumulation (in pixels)..." << endl;
+        LSDIndexRaster FlowAcc = FlowInfo.write_NContributingNodes_to_LSDIndexRaster();
+
+        cout << "\t Converting to flow area..." << endl;
+        LSDRaster DrainageArea = FlowInfo.write_DrainageArea_to_LSDRaster();
+
+        if (this_bool_map["print_DrainageArea_raster"])
+        {
+          string DA_raster_name = OUT_DIR+OUT_ID+"_DArea";
+          DrainageArea.write_raster(DA_raster_name,raster_ext);
+        }
+
+        // calculate the distance from outlet
+        cout << "\t Calculating flow distance..." << endl;
+        LSDRaster DistanceFromOutlet = FlowInfo.distance_from_outlet();
+
+        cout << "\t Loading Sources..." << endl;
+        cout << "\t Source file is... " << CHeads_file << endl;
+
+        // load the sources
+        vector<int> sources;
+        if (CHeads_file == "NULL" || CHeads_file == "Null" || CHeads_file == "null")
+        {
+          cout << endl << endl << endl << "==================================" << endl;
+          cout << "The channel head file is null. " << endl;
+          cout << "Getting sources from a threshold of "<< this_int_map["threshold_contributing_pixels"] << " pixels." <<endl;
+          sources = FlowInfo.get_sources_index_threshold(FlowAcc, this_int_map["threshold_contributing_pixels"]);
+
+          cout << "The number of sources is: " << sources.size() << endl;
+        }
+        else
+        {
+          cout << "Loading channel heads from the file: " << DATA_DIR+CHeads_file << endl;
+          sources = FlowInfo.Ingest_Channel_Heads((DATA_DIR+CHeads_file), "csv",2);
+          cout << "\t Got sources!" << endl;
+        }
+
+        // now get the junction network
+        LSDJunctionNetwork JunctionNetwork(sources, FlowInfo);
+
+        // get the chi coordinate
+        float A_0 = 1.0;
+        float thresh_area_for_chi = float( this_int_map["threshold_contributing_pixels"] ); // needs to be smaller than threshold channel area
+
+        float movern = this_float_map["m"]/this_float_map["n"];
+        LSDRaster chi_coordinate = FlowInfo.get_upslope_chi_from_all_baselevel_nodes(movern,A_0,thresh_area_for_chi);
+
+        vector<int> BaseLevelJunctions = JunctionNetwork.get_BaseLevelJunctions();
+
+        cout << endl << endl << endl << "=================" << endl;
+        for (int i = 0; i< int(BaseLevelJunctions.size()); i++)
+        {
+          cout << "bl["<<i<<"]: " << BaseLevelJunctions[i] << endl;
+        }
+        cout <<"=================" << endl;
+
+        vector<int> source_nodes;
+        vector<int> outlet_nodes;
+        vector<int> baselevel_node_of_each_basin;
+        int n_nodes_to_visit = 10;
+        JunctionNetwork.get_overlapping_channels_to_downstream_outlets(FlowInfo, BaseLevelJunctions, DistanceFromOutlet,
+                                    source_nodes,outlet_nodes,baselevel_node_of_each_basin,n_nodes_to_visit);
+
+        LSDChiTools ChiTool_chi_checker(FlowInfo);
+        ChiTool_chi_checker.chi_map_automator_chi_only(FlowInfo, source_nodes, outlet_nodes, baselevel_node_of_each_basin,
+                            filled_topography, DistanceFromOutlet,
+                            DrainageArea, chi_coordinate);
+
+        string chi_data_maps_string = OUT_DIR+OUT_ID+"_initial_chi_data_map.csv";
+        ChiTool_chi_checker.print_chi_data_map_to_csv(FlowInfo, chi_data_maps_string);
+
+        if ( this_bool_map["convert_csv_to_geojson"])
+        {
+          string gjson_name = OUT_DIR+OUT_ID+"_initial_chi_data_map.geojson";
+          LSDSpatialCSVReader thiscsv(chi_data_maps_string);
+          thiscsv.print_data_to_geojson(gjson_name);
+        }
+
       }
 
       // This gets a single channel from your loaded raster for use later
@@ -565,6 +766,104 @@ int main (int nNumberofArgs,char *argv[])
       mod.initialise_taper_edges_and_raise_raster(1);
       create_initial_surface = false;
       this_bool_map["force_dissect"] = false;
+
+
+      // now for logic if you want a diamond square replacement
+      if (this_bool_map["convert_intitial_raster_to_diamond_square_fractal"])
+      {
+        int this_frame;
+
+        cout << "I going to replace your raster with a diamond square fractal surface." << endl;
+        cout <<"then dissects the landscape for you." << endl;
+
+        int smallest_dimension;
+        if( mod.get_NRows() <= mod.get_NCols())
+        {
+          smallest_dimension = mod.get_NRows();
+        }
+        else
+        {
+          smallest_dimension = mod.get_NCols();
+        }
+
+        cout << "Getting the diamond square dimensions for your loaded DEM. " << endl;
+        cout << "The DEM has " << mod.get_NRows() << " rows and " << mod.get_NCols() << " columns." << endl;
+        // now get the largest possible dimension
+        float lps = floor( log2( float(smallest_dimension) ) );
+        int largest_possible_scale = int(lps);
+        if( this_int_map["diamond_square_feature_order"] > largest_possible_scale )
+        {
+          this_int_map["diamond_square_feature_order"] = largest_possible_scale;
+        }
+        cout << "    The largest dimnesion is: " << smallest_dimension << " pixels." << endl;
+        cout << "    So the biggest scale is: " << pow(2,largest_possible_scale) << " pixels or 2 to the " << largest_possible_scale << " power" << endl;
+        cout << "    I am setting the scale to: " << this_int_map["diamond_square_feature_order"] << endl;
+
+        // Now actually build the fractal surface
+        mod.intialise_diamond_square_fractal_surface(this_int_map["diamond_square_feature_order"], this_float_map["diamond_square_relief"]);
+
+        cout << "   Let me taper the edges of this fractal surface for you so that everything drains to the edge." << endl;
+        cout << "   I am tapering along the " << this_int_map["taper_rows"] << " row closes to the N and S boundaries" << endl;
+        mod.initialise_taper_edges_and_raise_raster(this_int_map["taper_rows"]);
+
+        cout << "   I am superimposing a parabola with a relief of "  << this_float_map["parabola_relief"] << " metres" << endl;
+        mod.superimpose_parabolic_surface(this_float_map["parabola_relief"]);
+
+        cout << "   I am going to fill and then roughen the surface for you. Roughness elements will " << endl;
+        cout << "   have a maximum amplitude of " << this_float_map["roughness_relief"]<< " metres." << endl;
+        mod.raise_and_fill_raster();
+        mod.set_noise(this_float_map["roughness_relief"]);
+        mod.random_surface_noise();
+        mod.raise_and_fill_raster();
+
+        this_frame = 9999;
+        mod.print_rasters_and_csv( this_frame );
+
+
+        cout << "Now I am going to run some fluvial incision at a small timestep" << endl;
+        cout <<"I am going to use a moderate K value and uplift, since I don't" << endl;
+        cout << "want to overexcavate the surface" << endl;
+        mod.set_hillslope(false);
+        //mod.set_timeStep( 1 );
+        int this_uplift_mode = 0;     // block uplift
+        float this_K = 0.001;
+        float this_U = 0.0005;
+        mod.set_K(this_K);
+
+        mod.set_uplift( this_uplift_mode, this_U );
+        this_frame = 1;
+        for (int cycle = 1; cycle<=10; cycle++)
+        {
+          cout << "Cycle " << cycle << " of 10" << endl;
+          mod.set_timeStep( float(cycle) );
+          for (int i = 0; i<21; i++)
+          {
+
+            if (i%10 == 0)
+            cout << "Initial dissection; i = " << i << " of 20" << endl;
+            mod.fluvial_incision_with_uplift();
+
+          }
+
+          mod.raise_and_fill_raster();
+          //this_frame++;
+          //mod.print_rasters_and_csv( this_frame );
+        }
+
+        // now print the model result
+        this_frame = 9998;
+        mod.print_rasters_and_csv( this_frame );
+
+
+        // Now impose nodata
+        mod.mask_to_nodata_impose_nodata(temp_raster);
+        this_frame = 9997;
+        mod.print_rasters_and_csv( this_frame );
+
+
+        current_end_time = 0;        
+      }
+
     }
     else
     {
@@ -572,6 +871,8 @@ int main (int nNumberofArgs,char *argv[])
       cout << "I will also create an initial surface for you." << endl;
       create_initial_surface = true;
     }
+
+
   }
   else
   {
@@ -1016,6 +1317,23 @@ int main (int nNumberofArgs,char *argv[])
     mod.print_rasters_and_csv( this_frame );
   }
 
+
+
+  //=============================================================================
+  //
+  //  /$$$$$$                                          /$$                    
+  // /$$__  $$                                        |__/                    
+  // | $$  \__/ /$$$$$$$   /$$$$$$   /$$$$$$   /$$$$$$  /$$ /$$$$$$$   /$$$$$$ 
+  // |  $$$$$$ | $$__  $$ |____  $$ /$$__  $$ /$$__  $$| $$| $$__  $$ /$$__  $$
+  //  \____  $$| $$  \ $$  /$$$$$$$| $$  \ $$| $$  \ $$| $$| $$  \ $$| $$  \ $$
+  //  /$$  \ $$| $$  | $$ /$$__  $$| $$  | $$| $$  | $$| $$| $$  | $$| $$  | $$
+  // |  $$$$$$/| $$  | $$|  $$$$$$$| $$$$$$$/| $$$$$$$/| $$| $$  | $$|  $$$$$$$
+  //  \______/ |__/  |__/ \_______/| $$____/ | $$____/ |__/|__/  |__/ \____  $$
+  //                               | $$      | $$                     /$$  \ $$
+  //                               | $$      | $$                    |  $$$$$$/
+  //                               |__/      |__/                     \______/ 
+  // 
+  //==============================================================================                                    
   if(this_bool_map["snap_to_steady_variable_variable_K_variable_U"])
   {
     cout << "I am going to snap to steady using various variable K and U fields." << endl;
@@ -1091,8 +1409,13 @@ int main (int nNumberofArgs,char *argv[])
       // Now the actual snapping!
       cout << endl << endl << endl << endl;
       cout << "=================================================" << endl;
-      cout << "The U value at (500,500) is" << U_values.get_data_element(500,500) << endl;
+      cout << "The U value at (500,500) is: " << U_values.get_data_element(500,500) << endl;
       mod.fluvial_snap_to_steady_variable_K_variable_U(K_values, U_values, source_points_data,this_bool_map["carve_before_fill"]);
+
+      if (this_bool_map["use_initial_topography_as_max_elevation"])
+      {
+        mod.cap_elevations(InitialRaster);
+      }
 
       // Now print
 
@@ -1113,437 +1436,164 @@ int main (int nNumberofArgs,char *argv[])
 
     }
 
-    cout << "Thanks for snapping!" << endl;
-  }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-if(this_bool_map["snap_to_steady_variable_variable_K_variable_U_use_LithoCube"])
-  {
-    cout << "I am going to snap to steady using various variable K and U fields, and 3D lithological data." << endl;
-    cout << "I will also use a fixed channel if you have one. " << endl;
-
-    // First load the two variable K and variable U maps
-    string U_fname = DATA_DIR+this_string_map["variable_U_name"];
-    string U_header = DATA_DIR+this_string_map["variable_U_name"]+".hdr";
-
-    // Then load the vo and asc files containing the 3D litho data 
-    string this_vo_filename = DATA_DIR+this_string_map["vo_filename"];
-    string this_vo_asc = DATA_DIR+this_string_map["vo_asc_filename"];
-
-    // Set names for K raster and lithocode raster to be printed 
-    string K_name = DATA_DIR+OUT_ID+"_KRasterLSDLC";
-    string lithocodes_raster_name = DATA_DIR+OUT_ID+"_LithoCodes";
-
-    // Load the elevation raster
-    LSDRaster elev_raster(DATA_DIR+DEM_ID,"bil");
-    
-    // Adjust the elevation of the raster
-    if (this_int_map["elevation_change"] != 0)
+    if (this_bool_map["print_final_channel_network"])
     {
-      elev_raster.AdjustElevation(this_int_map["elevation_change"]);
-      cout << "Adjusted the elevation of your raster by " << this_int_map["elevation_change"] << endl;
-      elev_raster.write_raster(DATA_DIR+DEM_ID+"_Dropped", "bil");
-      // I will also want to adjust the elevation of the fixed channel here so I don't have to edit the csv file manually
-    }
-    
-    // Initialise the lithocube and ingest the lithology data
-    cout << "I am going to load lithology information" << endl;
-    cout << "The filename is: " << this_vo_filename << endl;
-    LSDLithoCube LSDLC(this_vo_filename);
-    LSDLC.ingest_litho_data(this_vo_asc);    
-    
-    // Deal with the georeferencing
-    int UTM_zone;
-    bool is_North = true;
-    string NorS = "N";
-    elev_raster.get_UTM_information(UTM_zone,is_North);
-    if (is_North == false)
-    {
-      NorS = "S";
-    }  
-    LSDLC.impose_georeferencing_UTM(UTM_zone, NorS);
-
-    // Let's create the map of stratigraphy codes and K values 
-    LSDLC.hardcode_fill_strati_to_K_map();    
-
-    // Now we'll get the lithology codes, convert them to K values and make a raster of K values for the model to use
-    cout << "Getting the lithology codes" << endl;
-    LSDIndexRaster lithocodes_index_raster = LSDLC.get_lithology_codes_from_raster(elev_raster);
-    cout << "Converting the litho codes to K values" << endl;
-    LSDRaster K_values = LSDLC.index_to_K(lithocodes_index_raster, 0.000001);
-       
-    LSDRaster Temp_raster = mod.return_as_raster();
-
-    // Make a raster of uplift values 
-    LSDRaster U_values;
-    ifstream U_file_info_in;
-    U_file_info_in.open(U_header.c_str());
-    // check if the parameter file exists
-    if( not U_file_info_in.fail() )
-    {
-      LSDRaster temp_U_values(U_fname,raster_ext);
-      U_values = temp_U_values;
-    }
-    else
-    {
-      cout << "No variable U raster found. I will make one with a constant value of " << this_float_map["rudimentary_steady_forcing_uplift"] << endl;
-      LSDRasterMaker URaster(Temp_raster);
-      URaster.set_to_constant_value(this_float_map["rudimentary_steady_forcing_uplift"]);
-      U_values = URaster.return_as_raster();
-    }
-    U_file_info_in.close();
+      LSDRaster ft,ct;
 
 
-    LSDRasterInfo RI(K_values);
-    // Get the latitude and longitude
-    cout << "I am reading points from the file: "+ this_string_map["fixed_channel_csv_name"] << endl;
-    LSDSpatialCSVReader source_points_data( RI, (DATA_DIR+this_string_map["fixed_channel_csv_name"]) );
-
-    int n_snaps;
-    if (not this_bool_map["cycle_fluvial_snapping"])
-    {
-      n_snaps = 1;
-    }
-    else
-    {
-      n_snaps = this_int_map["snapping_cycles"];
-    }
-
-    int this_frame = 5000;
-    mod.set_current_frame(this_frame);
-    cout << "Let me do a few snaps. The number of snaps is: " << n_snaps << endl;
-    for (int i = 0; i < n_snaps; i++)
-    {
-      // Now the actual snapping!
-      cout << endl << endl << endl << endl;
-      cout << "=================================================" << endl;
-      cout << "The U value at (500,500) is" << U_values.get_data_element(500,500) << endl;
-
-      cout << "*****************************************" << endl;
-      cout << "This is snap " << i+1 << " of " << n_snaps << endl;
-      cout << "*****************************************" << endl;
-      
-      LSDRaster lithocodes_raster;
-
-      // if(i>0)
-      // {
-      cout << "Let me create a raster of the topography from the previous loop." << endl;
-      LSDRaster new_muddpile_topo_raster = mod.return_as_raster();
-      cout << "Now I'll check where in the lithocube we are and make a raster of lithocodes." << endl;
-      LSDIndexRaster lithocodes_index_raster = LSDLC.get_lithology_codes_from_raster(new_muddpile_topo_raster);
-      cout << "I am now converting the lithocodes index raster to an LSDRaster" << endl;
-      lithocodes_raster = LSDRaster(lithocodes_index_raster);
-      cout << "Converting the litho codes to K values" << endl;
-      K_values = LSDLC.index_to_K(lithocodes_index_raster, 0.000001);
-
-      // }
-
-      mod.fluvial_snap_to_steady_variable_K_variable_U(K_values, U_values, source_points_data,this_bool_map["carve_before_fill"]);
-
-      // Now print
-
-      if (i % this_int_map["snap_print_rate"] == 0)
+      if(this_bool_map["impose_single_channel_printing"])
       {
-        cout << "This is snap " << i+1 << " of " << n_snaps << endl;
+        // load the single channel
+        LSDRasterInfo RI(InitialRaster);
+        // Get the latitude and longitude
+        //cout << "I am reading points from the file: "+ this_string_map["channel_source_fname"] << endl;
+        LSDSpatialCSVReader source_points_data( RI, (DATA_DIR+this_string_map["fixed_channel_csv_name"]) );
 
-        if(this_bool_map["print_snapped_to_steady_frame"])
+        if(this_bool_map["fixed_channel_dig_and_slope"])
         {
-          cout << endl << endl << "====================================" << endl;
-          cout << "I am printing the snapped surface, increasing the frame count by 1." << endl;
-          cout << "The frame number is " << this_frame << endl;
-          mod.set_current_frame(this_frame);
-          mod.print_rasters_and_csv( this_frame );
-          if(this_bool_map["print_K_raster"])
-          {
-            cout << "Printing a K raster" << endl;
-            K_values.write_raster(K_name + to_string(this_frame), "bil");
-          }
-          if(this_bool_map["print_lithocode_raster"]) //&& i>0
-          {
-            cout << "Printing a lithocode raster" << endl;
-            lithocodes_raster.write_raster(lithocodes_raster_name + to_string(this_frame), "bil");
-          }
+          string fd_column_name = this_string_map["single_channel_fd_string"];
+          string elevation_column_name = this_string_map["single_channel_elev_string"];
 
+          source_points_data.data_column_add_float(elevation_column_name, -this_float_map["single_channel_dig"]);
+          source_points_data.enforce_slope(fd_column_name, elevation_column_name, this_float_map["min_slope_for_fill"]);  
+
+          string csv_name = OUT_DIR+"final_single_channel.csv";
+          source_points_data.print_data_to_csv(csv_name);
+          if ( this_bool_map["convert_csv_to_geojson"])
+          {
+            string gjson_name = OUT_DIR+"final_single_channel.geojson";
+            source_points_data.print_data_to_geojson(gjson_name);
+          }            
         }
-      }
-      this_frame++;
 
+        mod.impose_channels(source_points_data);
+      }
+
+      LSDRaster new_muddpile_topo_raster = mod.return_as_raster(); 
+      if(this_bool_map["carve_before_fill"])
+      {
+        ct = new_muddpile_topo_raster.Breaching_Lindsay2016();
+        ft = ct.fill(this_float_map["min_slope_for_fill"]);
+      }
+      else
+      {
+        ft = new_muddpile_topo_raster.fill(this_float_map["min_slope_for_fill"]);
+      }
+
+      // Write the raster
+      string R_name = OUT_DIR+"Final_DEM_fill";
+      ft.write_raster(R_name,"bil");
+      R_name = OUT_DIR+"Final_DEM";
+      new_muddpile_topo_raster.write_raster(R_name,"bil");
+  
+      cout << "\t Flow routing..." << endl;
+      LSDFlowInfo FlowInfo(boundary_conditions,ft);
+
+      // calculate the flow accumulation
+      cout << "\t Calculating flow accumulation (in pixels)..." << endl;
+      LSDIndexRaster FlowAcc = FlowInfo.write_NContributingNodes_to_LSDIndexRaster();
+
+      cout << "\t Converting to flow area..." << endl;
+      LSDRaster DrainageArea = FlowInfo.write_DrainageArea_to_LSDRaster();
+
+      // calculate the distance from outlet
+      cout << "\t Calculating flow distance..." << endl;
+      LSDRaster DistanceFromOutlet = FlowInfo.distance_from_outlet();
+
+      cout << "\t Loading Sources..." << endl;
+      cout << "\t Source file is... " << CHeads_file << endl;
+
+      // load the sources
+      vector<int> sources;
+      if (CHeads_file == "NULL" || CHeads_file == "Null" || CHeads_file == "null")
+      {
+        cout << endl << endl << endl << "==================================" << endl;
+        cout << "The channel head file is null. " << endl;
+        cout << "Getting sources from a threshold of "<< this_int_map["threshold_contributing_pixels"] << " pixels." <<endl;
+        sources = FlowInfo.get_sources_index_threshold(FlowAcc, this_int_map["threshold_contributing_pixels"]);
+
+        cout << "The number of sources is: " << sources.size() << endl;
+      }
+      else
+      {
+        cout << "Loading channel heads from the file: " << DATA_DIR+CHeads_file << endl;
+        sources = FlowInfo.Ingest_Channel_Heads((DATA_DIR+CHeads_file), "csv",2);
+        cout << "\t Got sources!" << endl;
+      }
+
+      // now get the junction network
+      LSDJunctionNetwork JunctionNetwork(sources, FlowInfo);
+
+      // get the chi coordinate
+      float A_0 = 1.0;
+      float thresh_area_for_chi = float( this_int_map["threshold_contributing_pixels"] ); // needs to be smaller than threshold channel area
+
+      float movern = this_float_map["m"]/this_float_map["n"];
+      LSDRaster chi_coordinate = FlowInfo.get_upslope_chi_from_all_baselevel_nodes(movern,A_0,thresh_area_for_chi);
+
+      vector<int> BaseLevelJunctions = JunctionNetwork.get_BaseLevelJunctions();
+
+        cout << endl << endl << endl << "=================" << endl;
+        for (int i = 0; i< int(BaseLevelJunctions.size()); i++)
+        {
+          cout << "bl["<<i<<"]: " << BaseLevelJunctions[i] << endl;
+        }
+        cout <<"=================" << endl;
+
+      vector<int> source_nodes;
+      vector<int> outlet_nodes;
+      vector<int> baselevel_node_of_each_basin;
+      int n_nodes_to_visit = 10;
+      JunctionNetwork.get_overlapping_channels_to_downstream_outlets(FlowInfo, BaseLevelJunctions, DistanceFromOutlet,
+                                  source_nodes,outlet_nodes,baselevel_node_of_each_basin,n_nodes_to_visit);
+
+      LSDChiTools ChiTool_chi_checker(FlowInfo);
+      ChiTool_chi_checker.chi_map_automator_chi_only(FlowInfo, source_nodes, outlet_nodes, baselevel_node_of_each_basin,
+                          ft, DistanceFromOutlet,
+                          DrainageArea, chi_coordinate);
+
+      string chi_data_maps_string = OUT_DIR+OUT_ID+"_final_chi_data_map.csv";
+      ChiTool_chi_checker.print_chi_data_map_to_csv(FlowInfo, chi_data_maps_string);
+
+      if ( this_bool_map["convert_csv_to_geojson"])
+      {
+        string gjson_name = OUT_DIR+OUT_ID+"_final_chi_data_map.geojson";
+        LSDSpatialCSVReader thiscsv(chi_data_maps_string);
+        thiscsv.print_data_to_geojson(gjson_name);
+      }  
     }
 
     cout << "Thanks for snapping!" << endl;
   }
 
-
-
-
-
-
-
-
-
-if(this_bool_map["snap_to_steady_critical_slopes_use_LithoCube"])
-{
-  cout << "I am going to snap to steady using various variable K and U fields, and 3D lithological data." << endl;
-  cout << "I will also use a fixed channel if you have one. " << endl;
-
-  // First load the two variable K and variable U maps
-  string U_fname = DATA_DIR+this_string_map["variable_U_name"];
-  string U_header = DATA_DIR+this_string_map["variable_U_name"]+".hdr";
-
-  // Then load the vo and asc files containing the 3D litho data 
-  string this_vo_filename = DATA_DIR+this_string_map["vo_filename"];
-  string this_vo_asc = DATA_DIR+this_string_map["vo_asc_filename"];
-
-  // Set names for K raster and lithocode raster to be printed 
-  string K_name = DATA_DIR+OUT_ID+"_KRasterLSDLC";
-  string Sc_name = DATA_DIR+OUT_ID+"_ScRasterLSDLC";
-  string lithocodes_raster_name = DATA_DIR+OUT_ID+"_LithoCodes";
-
-  // Load the elevation raster
-  LSDRaster elev_raster(DATA_DIR+DEM_ID,"bil");
-  
-  // Adjust the elevation of the raster
-  if (this_int_map["elevation_change"] != 0)
-  {
-    elev_raster.AdjustElevation(this_int_map["elevation_change"]);
-    cout << "Adjusted the elevation of your raster by " << this_int_map["elevation_change"] << endl;
-    elev_raster.write_raster(DATA_DIR+DEM_ID+"_Dropped", "bil");
-    // I will also want to adjust the elevation of the fixed channel here so I don't have to edit the csv file manually
-  }
-  
-  // Initialise the lithocube and ingest the lithology data
-  cout << "I am going to load lithology information" << endl;
-  cout << "The filename is: " << this_vo_filename << endl;
-  LSDLithoCube LSDLC(this_vo_filename);
-  LSDLC.ingest_litho_data(this_vo_asc);    
-  
-  // Deal with the georeferencing
-  int UTM_zone;
-  bool is_North = true;
-  string NorS = "N";
-  elev_raster.get_UTM_information(UTM_zone,is_North);
-  if (is_North == false)
-  {
-    NorS = "S";
-  }  
-  LSDLC.impose_georeferencing_UTM(UTM_zone, NorS);
-
-  // Let's create the maps of stratigraphy codes and K values, and Sc values  
-  LSDLC.hardcode_fill_strati_to_K_map();
-  LSDLC.hardcode_fill_strati_to_Sc_map();       
-
-  // Now we'll get the lithology codes, convert them to K values and make a raster of K values for the model to use
-  cout << "Getting the lithology codes" << endl;
-  LSDIndexRaster lithocodes_index_raster = LSDLC.get_lithology_codes_from_raster(elev_raster);
-  cout << "Converting the litho codes to K values" << endl;
-  LSDRaster K_values = LSDLC.index_to_K(lithocodes_index_raster, 0.000001);
-  cout << "Converting the litho codes to Sc values" << endl;
-  LSDRaster Sc_values = LSDLC.index_to_Sc(lithocodes_index_raster, 0.45);
-      
-  LSDRaster Temp_raster = mod.return_as_raster();
-
-  // Make a raster of uplift values 
-  LSDRaster U_values;
-  ifstream U_file_info_in;
-  U_file_info_in.open(U_header.c_str());
-  // check if the parameter file exists
-  if( not U_file_info_in.fail() )
-  {
-    LSDRaster temp_U_values(U_fname,raster_ext);
-    U_values = temp_U_values;
-  }
-  else
-  {
-    cout << "No variable U raster found. I will make one with a constant value of " << this_float_map["rudimentary_steady_forcing_uplift"] << endl;
-    LSDRasterMaker URaster(Temp_raster);
-    URaster.set_to_constant_value(this_float_map["rudimentary_steady_forcing_uplift"]);
-    U_values = URaster.return_as_raster();
-  }
-  U_file_info_in.close();
-
-
-  LSDRasterInfo RI(K_values);
-  // Get the latitude and longitude
-  cout << "I am reading points from the file: "+ this_string_map["fixed_channel_csv_name"] << endl;
-  LSDSpatialCSVReader source_points_data( RI, (DATA_DIR+this_string_map["fixed_channel_csv_name"]) );
-
-  int n_snaps;
-  if (not this_bool_map["cycle_fluvial_snapping"])
-  {
-    n_snaps = 1;
-  }
-  else
-  {
-    n_snaps = this_int_map["snapping_cycles"];
-  }
-
-  int this_frame = 5000;
-  mod.set_current_frame(this_frame);
-  cout << "Let me do a few snaps. The number of snaps is: " << n_snaps << endl;
-
-
-  LSDRaster lithocodes_raster;
-  LSDRaster critical_slopes;
-  LSDRaster new_muddpile_topo_raster;
-
-  for (int i = 0; i < n_snaps; i++)
-  {
-    // Now the actual snapping!
-    cout << endl << endl << endl << endl;
-    cout << "=================================================" << endl;
-    cout << "The U value at (500,500) is" << U_values.get_data_element(500,500) << endl;
-
-    cout << "*****************************************" << endl;
-    cout << "This is snap " << i+1 << " of " << n_snaps << endl;
-    cout << "*****************************************" << endl;
-    
-
-
-    // if(i>0)
-    // {
-    cout << "Let me create a raster of the topography from the previous loop." << endl;
-    new_muddpile_topo_raster = mod.return_as_raster();
-    cout << "Now I'll check where in the lithocube we are and make a raster of lithocodes." << endl;
-    lithocodes_index_raster = LSDLC.get_lithology_codes_from_raster(new_muddpile_topo_raster);
-    cout << "I am now converting the lithocodes index raster to an LSDRaster" << endl;
-    lithocodes_raster = LSDRaster(lithocodes_index_raster);
-    cout << "Converting the litho codes to K values" << endl;
-    K_values = LSDLC.index_to_K(lithocodes_index_raster, 0.000001);
-    cout << "Converting the litho codes to Sc values" << endl;
-    Sc_values = LSDLC.index_to_Sc(lithocodes_index_raster, 0.45);
-
-    // }
-
-    mod.fluvial_snap_to_steady_variable_K_variable_U(K_values, U_values, source_points_data,this_bool_map["carve_before_fill"]);
-
-    // Snap to critical slopes now? 
-    if (i == n_snaps-1)
-    {
-      // first, get the channels for burning
-      LSDSpatialCSVReader chan_data = mod.get_channels_for_burning(this_int_map["threshold_contributing_pixels"]);
-
-      cout << "Last snap! Getting critical slopes and smoothing" << endl;
-      critical_slopes = mod.basic_valley_fill_critical_slope(Sc_values,this_int_map["threshold_contributing_pixels"]);
-
-
-
-      // smooth the critical slope raster
-      int kr = 0;
-      float sigma = this_float_map["smoothing_window_radius"];
-      for (int i = 0; i<this_int_map["smoothing_sweeps"]; i++)
-      {
-        cout << "smooth sweep " << i+1 << " of " << this_int_map["smoothing_sweeps"] << endl;
-        critical_slopes = critical_slopes.GaussianFilter(sigma, kr);
-      }
-
-      // Now impose those channels
-      LSDRasterMaker RM(critical_slopes);
-      RM.impose_channels(chan_data);
-      critical_slopes = RM.return_as_raster();
-
-    }
-    
-    // Now print
-    if (i % this_int_map["snap_print_rate"] == 0 || i == n_snaps-1)
-    {
-      cout << "This is snap " << i+1 << " of " << n_snaps << endl;
-
-      if(this_bool_map["print_snapped_to_steady_frame"])
-      {
-        cout << endl << endl << "====================================" << endl;
-        cout << "I am printing the snapped surface, increasing the frame count by 1." << endl;
-        cout << "The frame number is " << this_frame << endl;
-        mod.set_current_frame(this_frame);
-        mod.print_rasters_and_csv( this_frame );
-
-        if (i == n_snaps-1)
-        {
-          cout << "I'm writing the critical slope raster" << endl;
-          string this_raster_name = OUT_DIR+OUT_ID+"_CritSlope";
-          critical_slopes.write_raster(this_raster_name + to_string(this_frame), "bil");  
-
-          cout << "Let me print the hillshade for you. " << endl;
-          float hs_azimuth = 315;
-          float hs_altitude = 45;
-          float hs_z_factor = 1;
-          LSDRaster hs_raster = critical_slopes.hillshade(hs_altitude,hs_azimuth,hs_z_factor);
-          this_raster_name = OUT_DIR+OUT_ID+"_CritSlope_hs";
-          hs_raster.write_raster(this_raster_name + to_string(this_frame), "bil");
-        }
-
-        if(this_bool_map["print_K_raster"])
-        {
-          cout << "Printing a K raster" << endl;
-          K_values.write_raster(K_name + to_string(this_frame), "bil");
-        }
-        if(this_bool_map["print_Sc_raster"])
-        {
-          cout << "Printing a Sc raster" << endl;
-          Sc_values.write_raster(Sc_name + to_string(this_frame), "bil");
-        }
-        if(this_bool_map["print_lithocode_raster"]) //&& i>0
-        {
-          cout << "Printing a lithocode raster" << endl;
-          lithocodes_raster.write_raster(lithocodes_raster_name + to_string(this_frame), "bil");
-        }
-
-      }
-    }
-    this_frame++;
-
-  }
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+  //=============================================================================
+  //
+  //  /$$$$$$                                          /$$                    
+  // /$$__  $$                                        |__/                    
+  // | $$  \__/ /$$$$$$$   /$$$$$$   /$$$$$$   /$$$$$$  /$$ /$$$$$$$   /$$$$$$ 
+  // |  $$$$$$ | $$__  $$ |____  $$ /$$__  $$ /$$__  $$| $$| $$__  $$ /$$__  $$
+  //  \____  $$| $$  \ $$  /$$$$$$$| $$  \ $$| $$  \ $$| $$| $$  \ $$| $$  \ $$
+  //  /$$  \ $$| $$  | $$ /$$__  $$| $$  | $$| $$  | $$| $$| $$  | $$| $$  | $$
+  // |  $$$$$$/| $$  | $$|  $$$$$$$| $$$$$$$/| $$$$$$$/| $$| $$  | $$|  $$$$$$$
+  //  \______/ |__/  |__/ \_______/| $$____/ | $$____/ |__/|__/  |__/ \____  $$
+  //                               | $$      | $$                     /$$  \ $$
+  //                               | $$      | $$                    |  $$$$$$/
+  //                               |__/      |__/                     \______/ 
+  // 
+  //   /$$$$$$            /$$   /$$              /$$                              
+  //  /$$__  $$          |__/  | $$             | $$                              
+  // | $$  \__/  /$$$$$$  /$$ /$$$$$$   /$$$$$$$| $$  /$$$$$$   /$$$$$$   /$$$$$$ 
+  // | $$       /$$__  $$| $$|_  $$_/  /$$_____/| $$ /$$__  $$ /$$__  $$ /$$__  $$
+  // | $$      | $$  \__/| $$  | $$   |  $$$$$$ | $$| $$  \ $$| $$  \ $$| $$$$$$$$
+  // | $$    $$| $$      | $$  | $$ /$$\____  $$| $$| $$  | $$| $$  | $$| $$_____/
+  // |  $$$$$$/| $$      | $$  |  $$$$//$$$$$$$/| $$|  $$$$$$/| $$$$$$$/|  $$$$$$$
+  //  \______/ |__/      |__/   \___/ |_______/ |__/ \______/ | $$____/  \_______/
+  //                                                          | $$                
+  //                                                          | $$                
+  //                                                          |__/                
+  // 
+  //=============================================================================  
   if(this_bool_map["snap_to_critical_slopes"])
   {
     cout << "Let me snap the DEM to some critical slope values" << endl;
@@ -1610,6 +1660,11 @@ if(this_bool_map["snap_to_steady_critical_slopes_use_LithoCube"])
         LSDRaster smoothed_raster = mod.basic_smooth(pixel_weighting);
         mod.set_raster_data(smoothed_raster);
 
+        if (this_bool_map["use_initial_topography_as_max_elevation"])
+        {
+          mod.cap_elevations(InitialRaster);
+        }
+
 
         // Now print
         if (i % this_int_map["snap_hillslope_print_rate"] == 0)
@@ -1657,6 +1712,12 @@ if(this_bool_map["snap_to_steady_critical_slopes_use_LithoCube"])
                                                               this_int_map["threshold_contributing_pixels"]);
       }
 
+      if (this_bool_map["use_initial_topography_as_max_elevation"])
+      {
+        mod.cap_elevations(InitialRaster);
+      }
+
+
       cout << "I'm writing the critical slope raster" << endl;
       string this_raster_name = OUT_DIR+OUT_ID+"_CritSlope";
       critical_slopes.write_raster(this_raster_name,raster_ext);  
@@ -1670,11 +1731,138 @@ if(this_bool_map["snap_to_steady_critical_slopes_use_LithoCube"])
       this_raster_name = OUT_DIR+OUT_ID+"_CritSlope_hs";
       hs_raster.write_raster(this_raster_name,raster_ext); 
     }
-    
 
 
+    if (this_bool_map["print_final_channel_network"])
+    {
+      LSDRaster ft,ct;
+
+      if(this_bool_map["impose_single_channel_printing"])
+      {
+        // load the single channel
+        LSDRasterInfo RI(InitialRaster);
+        // Get the latitude and longitude
+        //cout << "I am reading points from the file: "+ this_string_map["channel_source_fname"] << endl;
+        LSDSpatialCSVReader source_points_data( RI, (DATA_DIR+this_string_map["fixed_channel_csv_name"]) );
+
+        if(this_bool_map["fixed_channel_dig_and_slope"])
+        {
+          string fd_column_name = this_string_map["single_channel_fd_string"];
+          string elevation_column_name = this_string_map["single_channel_elev_string"];
+
+          source_points_data.data_column_add_float(elevation_column_name, -this_float_map["single_channel_dig"]);
+          source_points_data.enforce_slope(fd_column_name, elevation_column_name, this_float_map["min_slope_for_fill"]);  
+
+          string csv_name = OUT_DIR+"final_single_channel.csv";
+          source_points_data.print_data_to_csv(csv_name);
+          if ( this_bool_map["convert_csv_to_geojson"])
+          {
+            string gjson_name = OUT_DIR+"final_single_channel.geojson";
+            source_points_data.print_data_to_geojson(gjson_name);
+          }   
+        }
+
+        mod.impose_channels(source_points_data);
+      }
+
+
+      LSDRaster new_muddpile_topo_raster = mod.return_as_raster(); 
+      if(this_bool_map["carve_before_fill"])
+      {
+        ct = new_muddpile_topo_raster.Breaching_Lindsay2016();
+        ft = ct.fill(this_float_map["min_slope_for_fill"]);
+      }
+      else
+      {
+        ft = new_muddpile_topo_raster.fill(this_float_map["min_slope_for_fill"]);
+      }
+
+      // Write the raster
+      string R_name = OUT_DIR+"Final_DEM_fill";
+      ft.write_raster(R_name,"bil");
+      R_name = OUT_DIR+"Final_DEM";
+      new_muddpile_topo_raster.write_raster(R_name,"bil");
+  
+      cout << "\t Flow routing..." << endl;
+      LSDFlowInfo FlowInfo(boundary_conditions,ft);
+
+      // calculate the flow accumulation
+      cout << "\t Calculating flow accumulation (in pixels)..." << endl;
+      LSDIndexRaster FlowAcc = FlowInfo.write_NContributingNodes_to_LSDIndexRaster();
+
+      cout << "\t Converting to flow area..." << endl;
+      LSDRaster DrainageArea = FlowInfo.write_DrainageArea_to_LSDRaster();
+
+      // calculate the distance from outlet
+      cout << "\t Calculating flow distance..." << endl;
+      LSDRaster DistanceFromOutlet = FlowInfo.distance_from_outlet();
+
+      cout << "\t Loading Sources..." << endl;
+      cout << "\t Source file is... " << CHeads_file << endl;
+
+      // load the sources
+      vector<int> sources;
+      if (CHeads_file == "NULL" || CHeads_file == "Null" || CHeads_file == "null")
+      {
+        cout << endl << endl << endl << "==================================" << endl;
+        cout << "The channel head file is null. " << endl;
+        cout << "Getting sources from a threshold of "<< this_int_map["threshold_contributing_pixels"] << " pixels." <<endl;
+        sources = FlowInfo.get_sources_index_threshold(FlowAcc, this_int_map["threshold_contributing_pixels"]);
+
+        cout << "The number of sources is: " << sources.size() << endl;
+      }
+      else
+      {
+        cout << "Loading channel heads from the file: " << DATA_DIR+CHeads_file << endl;
+        sources = FlowInfo.Ingest_Channel_Heads((DATA_DIR+CHeads_file), "csv",2);
+        cout << "\t Got sources!" << endl;
+      }
+
+      // now get the junction network
+      LSDJunctionNetwork JunctionNetwork(sources, FlowInfo);
+
+      // get the chi coordinate
+      float A_0 = 1.0;
+      float thresh_area_for_chi = float( this_int_map["threshold_contributing_pixels"] ); // needs to be smaller than threshold channel area
+
+      float movern = this_float_map["m"]/this_float_map["n"];
+      LSDRaster chi_coordinate = FlowInfo.get_upslope_chi_from_all_baselevel_nodes(movern,A_0,thresh_area_for_chi);
+
+      vector<int> BaseLevelJunctions = JunctionNetwork.get_BaseLevelJunctions();
+
+      cout << endl << endl << endl << "=================" << endl;
+      for (int i = 0; i< int(BaseLevelJunctions.size()); i++)
+      {
+        cout << "bl["<<i<<"]: " << BaseLevelJunctions[i] << endl;
+      }
+      cout <<"=================" << endl;
+
+      vector<int> source_nodes;
+      vector<int> outlet_nodes;
+      vector<int> baselevel_node_of_each_basin;
+      int n_nodes_to_visit = 10;
+      JunctionNetwork.get_overlapping_channels_to_downstream_outlets(FlowInfo, BaseLevelJunctions, DistanceFromOutlet,
+                                  source_nodes,outlet_nodes,baselevel_node_of_each_basin,n_nodes_to_visit);
+
+      LSDChiTools ChiTool_chi_checker(FlowInfo);
+      ChiTool_chi_checker.chi_map_automator_chi_only(FlowInfo, source_nodes, outlet_nodes, baselevel_node_of_each_basin,
+                          ft, DistanceFromOutlet,
+                          DrainageArea, chi_coordinate);
+
+      string chi_data_maps_string = OUT_DIR+OUT_ID+"_final_chi_data_map.csv";
+      ChiTool_chi_checker.print_chi_data_map_to_csv(FlowInfo, chi_data_maps_string);
+
+      if ( this_bool_map["convert_csv_to_geojson"])
+      {
+        string gjson_name = OUT_DIR+OUT_ID+"_final_chi_data_map.geojson";
+        LSDSpatialCSVReader thiscsv(chi_data_maps_string);
+        thiscsv.print_data_to_geojson(gjson_name);
+      }  
+    }
 
   }
+
+
 
   //============================================================================
   // Logic for snapping to steady state using equation 4a from Mudd et al 2014
@@ -1713,6 +1901,738 @@ if(this_bool_map["snap_to_steady_critical_slopes_use_LithoCube"])
 
 
 
+
+
+  //=======================================================================================
+  //  /$$       /$$   /$$     /$$                                                        
+  // | $$      |__/  | $$    | $$                                                        
+  // | $$       /$$ /$$$$$$  | $$$$$$$   /$$$$$$   /$$$$$$$ /$$$$$$$   /$$$$$$   /$$$$$$ 
+  // | $$      | $$|_  $$_/  | $$__  $$ /$$__  $$ /$$_____/| $$__  $$ |____  $$ /$$__  $$
+  // | $$      | $$  | $$    | $$  \ $$| $$  \ $$|  $$$$$$ | $$  \ $$  /$$$$$$$| $$  \ $$
+  // | $$      | $$  | $$ /$$| $$  | $$| $$  | $$ \____  $$| $$  | $$ /$$__  $$| $$  | $$
+  // | $$$$$$$$| $$  |  $$$$/| $$  | $$|  $$$$$$/ /$$$$$$$/| $$  | $$|  $$$$$$$| $$$$$$$/
+  // |________/|__/   \___/  |__/  |__/ \______/ |_______/ |__/  |__/ \_______/| $$____/ 
+  //                                                                           | $$      
+  //                                                                           | $$      
+  //                                                                           |__/      
+  //=======================================================================================
+  if(this_bool_map["snap_to_steady_variable_variable_K_variable_U_use_LithoCube"])
+  {
+    cout << "I am going to snap to steady using various variable K and U fields, and 3D lithological data." << endl;
+    cout << "I will also use a fixed channel if you have one. " << endl;
+
+    // First load the two variable K and variable U maps
+    string U_fname = DATA_DIR+this_string_map["variable_U_name"];
+    string U_header = DATA_DIR+this_string_map["variable_U_name"]+".hdr";
+
+    // Then load the vo and asc files containing the 3D litho data 
+    string this_vo_filename = DATA_DIR+this_string_map["vo_filename"];
+    string this_vo_asc = DATA_DIR+this_string_map["vo_asc_filename"];
+
+    // Set names for K raster and lithocode raster to be printed 
+    string K_name = DATA_DIR+OUT_ID+"_KRasterLSDLC";
+    string lithocodes_raster_name = DATA_DIR+OUT_ID+"_LithoCodes";
+
+    // Load the elevation raster
+    LSDRaster elev_raster(DATA_DIR+DEM_ID,"bil");
+    
+    // Adjust the elevation of the raster
+    if (this_int_map["elevation_change"] != 0)
+    {
+      elev_raster.AdjustElevation(this_int_map["elevation_change"]);
+      cout << "Adjusted the elevation of your raster by " << this_int_map["elevation_change"] << endl;
+      elev_raster.write_raster(DATA_DIR+DEM_ID+"_Dropped", "bil");
+      // I will also want to adjust the elevation of the fixed channel here so I don't have to edit the csv file manually
+    }
+    
+    // Initialise the lithocube and ingest the lithology data
+    cout << "I am going to load lithology information" << endl;
+    cout << "The filename is: " << this_vo_filename << endl;
+    LSDLithoCube LSDLC(this_vo_filename);
+    LSDLC.ingest_litho_data(this_vo_asc);    
+    
+    // Deal with the georeferencing
+    int UTM_zone;
+    bool is_North = true;
+    string NorS = "N";
+    elev_raster.get_UTM_information(UTM_zone,is_North);
+    if (is_North == false)
+    {
+      NorS = "S";
+    }  
+    LSDLC.impose_georeferencing_UTM(UTM_zone, NorS);
+
+    // Let's create the map of stratigraphy codes and K values    
+    if( this_bool_map["load_lithocode_to_K_csv"])
+    {   
+      string this_lookup_table_K = DATA_DIR+this_string_map["lookup_filename_K"];
+      cout << "I am going to load a lookup table for K" << endl;
+      cout << "The filename is: " << this_lookup_table_K << endl;
+      LSDLC.read_strati_to_K_csv(this_lookup_table_K);
+    }
+    else
+    {
+      LSDLC.hardcode_fill_strati_to_K_map();  
+    }  
+    
+
+
+    // Now we'll get the lithology codes, convert them to K values and make a raster of K values for the model to use
+    cout << "Getting the lithology codes" << endl;
+    LSDIndexRaster lithocodes_index_raster = LSDLC.get_lithology_codes_from_raster(elev_raster,forbidden_lithocodes);
+    cout << "Converting the litho codes to K values" << endl;
+    LSDRaster K_values = LSDLC.index_to_K(lithocodes_index_raster, 0.000003);
+       
+    LSDRaster Temp_raster = mod.return_as_raster();
+
+    // Make a raster of uplift values 
+    LSDRaster U_values;
+    ifstream U_file_info_in;
+    U_file_info_in.open(U_header.c_str());
+    // check if the parameter file exists
+    if( not U_file_info_in.fail() )
+    {
+      LSDRaster temp_U_values(U_fname,raster_ext);
+      U_values = temp_U_values;
+    }
+    else
+    {
+      cout << "No variable U raster found. I will make one with a constant value of " << this_float_map["rudimentary_steady_forcing_uplift"] << endl;
+      LSDRasterMaker URaster(Temp_raster);
+      URaster.set_to_constant_value(this_float_map["rudimentary_steady_forcing_uplift"]);
+      U_values = URaster.return_as_raster();
+    }
+    U_file_info_in.close();
+
+
+    LSDRasterInfo RI(K_values);
+    // Get the latitude and longitude
+    cout << "I am reading points from the file: "+ this_string_map["fixed_channel_csv_name"] << endl;
+    LSDSpatialCSVReader source_points_data( RI, (DATA_DIR+this_string_map["fixed_channel_csv_name"]) );
+
+    int n_snaps;
+    if (not this_bool_map["cycle_fluvial_snapping"])
+    {
+      n_snaps = 1;
+    }
+    else
+    {
+      n_snaps = this_int_map["snapping_cycles"];
+    }
+
+    int this_frame = 5000;
+    mod.set_current_frame(this_frame);
+    cout << "Let me do a few snaps. The number of snaps is: " << n_snaps << endl;
+    for (int i = 0; i < n_snaps; i++)
+    {
+      // Now the actual snapping!
+      cout << endl << endl << endl << endl;
+      cout << "=================================================" << endl;
+      cout << "The U value at (500,500) is: " << U_values.get_data_element(500,500) << endl;
+
+      cout << "*****************************************" << endl;
+      cout << "This is snap " << i+1 << " of " << n_snaps << endl;
+      cout << "*****************************************" << endl;
+      
+      LSDRaster lithocodes_raster;
+
+      // if(i>0)
+      // {
+      cout << "Let me create a raster of the topography from the previous loop." << endl;
+      LSDRaster new_muddpile_topo_raster = mod.return_as_raster();
+      cout << "Now I'll check where in the lithocube we are and make a raster of lithocodes." << endl;
+      LSDIndexRaster lithocodes_index_raster = LSDLC.get_lithology_codes_from_raster(new_muddpile_topo_raster,forbidden_lithocodes);
+      cout << "I am now converting the lithocodes index raster to an LSDRaster" << endl;
+      lithocodes_raster = LSDRaster(lithocodes_index_raster);
+      cout << "Converting the litho codes to K values" << endl;
+      K_values = LSDLC.index_to_K(lithocodes_index_raster, 0.000003);
+
+      // }
+
+      mod.fluvial_snap_to_steady_variable_K_variable_U(K_values, U_values, source_points_data,this_bool_map["carve_before_fill"]);
+
+
+      if (this_bool_map["use_initial_topography_as_max_elevation"])
+      {
+        mod.cap_elevations(InitialRaster);
+      }
+
+      // Now print
+
+      if (i % this_int_map["snap_print_rate"] == 0)
+      {
+        cout << "This is snap " << i+1 << " of " << n_snaps << endl;
+
+        if(this_bool_map["print_snapped_to_steady_frame"])
+        {
+          cout << endl << endl << "====================================" << endl;
+          cout << "I am printing the snapped surface, increasing the frame count by 1." << endl;
+          cout << "The frame number is " << this_frame << endl;
+          mod.set_current_frame(this_frame);
+          mod.print_rasters_and_csv( this_frame );
+          if(this_bool_map["print_K_raster"])
+          {
+            cout << "Printing a K raster" << endl;
+            K_values.write_raster(K_name + to_string(this_frame), "bil");
+          }
+          if(this_bool_map["print_lithocode_raster"]) //&& i>0
+          {
+            cout << "Printing a lithocode raster" << endl;
+            lithocodes_raster.write_raster(lithocodes_raster_name + to_string(this_frame), "bil");
+          }
+
+        }
+      }
+      this_frame++;
+
+    }
+
+
+    if (this_bool_map["print_final_channel_network"])
+    {
+      cout << endl << endl << endl << "================" << endl; 
+      cout << "We have got to the end of a lithosnappung run!" << endl;
+      cout << "I am now going to print the final channel network" << endl;
+
+
+      LSDRaster ft,ct;
+
+      if(this_bool_map["impose_single_channel_printing"])
+      {
+        // load the single channel
+        LSDRasterInfo RI(InitialRaster);
+        // Get the latitude and longitude
+        //cout << "I am reading points from the file: "+ this_string_map["channel_source_fname"] << endl;
+        LSDSpatialCSVReader source_points_data( RI, (DATA_DIR+this_string_map["fixed_channel_csv_name"]) );
+
+        if(this_bool_map["fixed_channel_dig_and_slope"])
+        {
+          string fd_column_name = this_string_map["single_channel_fd_string"];
+          string elevation_column_name = this_string_map["single_channel_elev_string"];
+
+          source_points_data.data_column_add_float(elevation_column_name, -this_float_map["single_channel_dig"]);
+          source_points_data.enforce_slope(fd_column_name, elevation_column_name, this_float_map["min_slope_for_fill"]);  
+
+          string csv_name = OUT_DIR+"final_single_channel.csv";
+          source_points_data.print_data_to_csv(csv_name);
+          if ( this_bool_map["convert_csv_to_geojson"])
+          {
+            string gjson_name = OUT_DIR+"final_single_channel.geojson";
+            source_points_data.print_data_to_geojson(gjson_name);
+          }   
+        }
+
+        mod.impose_channels(source_points_data);
+      }
+
+      LSDRaster new_muddpile_topo_raster = mod.return_as_raster(); 
+      if(this_bool_map["carve_before_fill"])
+      {
+        ct = new_muddpile_topo_raster.Breaching_Lindsay2016();
+        ft = ct.fill(this_float_map["min_slope_for_fill"]);
+      }
+      else
+      {
+        ft = new_muddpile_topo_raster.fill(this_float_map["min_slope_for_fill"]);
+      }
+
+      // Write the raster
+      string R_name = OUT_DIR+"Final_DEM_fill";
+      ft.write_raster(R_name,"bil");
+      R_name = OUT_DIR+"Final_DEM";
+      new_muddpile_topo_raster.write_raster(R_name,"bil");
+  
+      cout << "\t Flow routing..." << endl;
+      LSDFlowInfo FlowInfo(boundary_conditions,ft);
+
+      // calculate the flow accumulation
+      cout << "\t Calculating flow accumulation (in pixels)..." << endl;
+      LSDIndexRaster FlowAcc = FlowInfo.write_NContributingNodes_to_LSDIndexRaster();
+
+      cout << "\t Converting to flow area..." << endl;
+      LSDRaster DrainageArea = FlowInfo.write_DrainageArea_to_LSDRaster();
+
+      // calculate the distance from outlet
+      cout << "\t Calculating flow distance..." << endl;
+      LSDRaster DistanceFromOutlet = FlowInfo.distance_from_outlet();
+
+      cout << "\t Loading Sources..." << endl;
+      cout << "\t Source file is... " << CHeads_file << endl;
+
+      // load the sources
+      vector<int> sources;
+      if (CHeads_file == "NULL" || CHeads_file == "Null" || CHeads_file == "null")
+      {
+        cout << endl << endl << endl << "==================================" << endl;
+        cout << "The channel head file is null. " << endl;
+        cout << "Getting sources from a threshold of "<< this_int_map["threshold_contributing_pixels"] << " pixels." <<endl;
+        sources = FlowInfo.get_sources_index_threshold(FlowAcc, this_int_map["threshold_contributing_pixels"]);
+
+        cout << "The number of sources is: " << sources.size() << endl;
+      }
+      else
+      {
+        cout << "Loading channel heads from the file: " << DATA_DIR+CHeads_file << endl;
+        sources = FlowInfo.Ingest_Channel_Heads((DATA_DIR+CHeads_file), "csv",2);
+        cout << "\t Got sources!" << endl;
+      }
+
+      // now get the junction network
+      LSDJunctionNetwork JunctionNetwork(sources, FlowInfo);
+
+      // get the chi coordinate
+      float A_0 = 1.0;
+      float thresh_area_for_chi = float( this_int_map["threshold_contributing_pixels"] ); // needs to be smaller than threshold channel area
+
+      float movern = this_float_map["m"]/this_float_map["n"];
+      LSDRaster chi_coordinate = FlowInfo.get_upslope_chi_from_all_baselevel_nodes(movern,A_0,thresh_area_for_chi);
+
+      vector<int> BaseLevelJunctions = JunctionNetwork.get_BaseLevelJunctions();
+
+      cout << endl << endl << endl << "=================" << endl;
+      for (int i = 0; i< int(BaseLevelJunctions.size()); i++)
+      {
+        cout << "bl["<<i<<"]: " << BaseLevelJunctions[i] << endl;
+      }
+      cout <<"=================" << endl;
+
+      vector<int> source_nodes;
+      vector<int> outlet_nodes;
+      vector<int> baselevel_node_of_each_basin;
+      int n_nodes_to_visit = 10;
+      JunctionNetwork.get_overlapping_channels_to_downstream_outlets(FlowInfo, BaseLevelJunctions, DistanceFromOutlet,
+                                  source_nodes,outlet_nodes,baselevel_node_of_each_basin,n_nodes_to_visit);
+
+      LSDChiTools ChiTool_chi_checker(FlowInfo);
+      ChiTool_chi_checker.chi_map_automator_chi_only(FlowInfo, source_nodes, outlet_nodes, baselevel_node_of_each_basin,
+                          ft, DistanceFromOutlet,
+                          DrainageArea, chi_coordinate);
+
+      string chi_data_maps_string = OUT_DIR+OUT_ID+"_final_chi_data_map.csv";
+      ChiTool_chi_checker.print_chi_data_map_to_csv(FlowInfo, chi_data_maps_string);
+
+      if ( this_bool_map["convert_csv_to_geojson"])
+      {
+        string gjson_name = OUT_DIR+OUT_ID+"_final_chi_data_map.geojson";
+        LSDSpatialCSVReader thiscsv(chi_data_maps_string);
+        thiscsv.print_data_to_geojson(gjson_name);
+      }  
+    }
+
+    cout << "Thanks for snapping!" << endl;
+  }
+
+  //=======================================================================================
+  //  /$$       /$$   /$$     /$$                                                        
+  // | $$      |__/  | $$    | $$                                                        
+  // | $$       /$$ /$$$$$$  | $$$$$$$   /$$$$$$   /$$$$$$$ /$$$$$$$   /$$$$$$   /$$$$$$ 
+  // | $$      | $$|_  $$_/  | $$__  $$ /$$__  $$ /$$_____/| $$__  $$ |____  $$ /$$__  $$
+  // | $$      | $$  | $$    | $$  \ $$| $$  \ $$|  $$$$$$ | $$  \ $$  /$$$$$$$| $$  \ $$
+  // | $$      | $$  | $$ /$$| $$  | $$| $$  | $$ \____  $$| $$  | $$ /$$__  $$| $$  | $$
+  // | $$$$$$$$| $$  |  $$$$/| $$  | $$|  $$$$$$/ /$$$$$$$/| $$  | $$|  $$$$$$$| $$$$$$$/
+  // |________/|__/   \___/  |__/  |__/ \______/ |_______/ |__/  |__/ \_______/| $$____/ 
+  //                                                                           | $$      
+  //                                                                           | $$      
+  //                                                                           |__/   
+  // 
+  //   /$$$$$$            /$$   /$$              /$$                              
+  //  /$$__  $$          |__/  | $$             | $$                              
+  // | $$  \__/  /$$$$$$  /$$ /$$$$$$   /$$$$$$$| $$  /$$$$$$   /$$$$$$   /$$$$$$ 
+  // | $$       /$$__  $$| $$|_  $$_/  /$$_____/| $$ /$$__  $$ /$$__  $$ /$$__  $$
+  // | $$      | $$  \__/| $$  | $$   |  $$$$$$ | $$| $$  \ $$| $$  \ $$| $$$$$$$$
+  // | $$    $$| $$      | $$  | $$ /$$\____  $$| $$| $$  | $$| $$  | $$| $$_____/
+  // |  $$$$$$/| $$      | $$  |  $$$$//$$$$$$$/| $$|  $$$$$$/| $$$$$$$/|  $$$$$$$
+  //  \______/ |__/      |__/   \___/ |_______/ |__/ \______/ | $$____/  \_______/
+  //                                                          | $$                
+  //                                                          | $$                
+  //                                                          |__/                
+  //    
+  //=======================================================================================
+  if(this_bool_map["snap_to_steady_critical_slopes_use_LithoCube"])
+  {
+    cout << "I am going to snap to steady using various variable K and U fields, and 3D lithological data." << endl;
+    cout << "I will also use a fixed channel if you have one. " << endl;
+
+    // First load the two variable K and variable U maps
+    string U_fname = DATA_DIR+this_string_map["variable_U_name"];
+    string U_header = DATA_DIR+this_string_map["variable_U_name"]+".hdr";
+
+    // Then load the vo and asc files containing the 3D litho data 
+    string this_vo_filename = DATA_DIR+this_string_map["vo_filename"];
+    string this_vo_asc = DATA_DIR+this_string_map["vo_asc_filename"];
+
+    // Set names for K raster and lithocode raster to be printed 
+    string K_name = DATA_DIR+OUT_ID+"_KRasterLSDLC";
+    string Sc_name = DATA_DIR+OUT_ID+"_ScRasterLSDLC";
+    string lithocodes_raster_name = DATA_DIR+OUT_ID+"_LithoCodes";
+
+    // Load the elevation raster
+    LSDRaster elev_raster(DATA_DIR+DEM_ID,"bil");
+    
+    // Adjust the elevation of the raster
+    if (this_int_map["elevation_change"] != 0)
+    {
+      elev_raster.AdjustElevation(this_int_map["elevation_change"]);
+      cout << "Adjusted the elevation of your raster by " << this_int_map["elevation_change"] << endl;
+      elev_raster.write_raster(DATA_DIR+DEM_ID+"_Dropped", "bil");
+      // I will also want to adjust the elevation of the fixed channel here so I don't have to edit the csv file manually
+    }
+    
+    // Initialise the lithocube and ingest the lithology data
+    cout << "I am going to load lithology information" << endl;
+    cout << "The filename is: " << this_vo_filename << endl;
+    LSDLithoCube LSDLC(this_vo_filename);
+    LSDLC.ingest_litho_data(this_vo_asc);    
+    
+    // Deal with the georeferencing
+    int UTM_zone;
+    bool is_North = true;
+    string NorS = "N";
+    elev_raster.get_UTM_information(UTM_zone,is_North);
+    if (is_North == false)
+    {
+      NorS = "S";
+    }  
+    LSDLC.impose_georeferencing_UTM(UTM_zone, NorS);
+
+    // Let's create the maps of stratigraphy codes and K values, and Sc values 
+    if( this_bool_map["load_lithocode_to_K_csv"])
+    {   
+      string this_lookup_table_K = DATA_DIR+this_string_map["lookup_filename_K"];
+      cout << "I am going to load a lookup table for K" << endl;
+      cout << "The filename is: " << this_lookup_table_K << endl;
+      LSDLC.read_strati_to_K_csv(this_lookup_table_K);
+    }
+    else
+    {
+      LSDLC.hardcode_fill_strati_to_K_map();  
+    }  
+    // Let's create the map of stratigraphy codes and K values    
+    if( this_bool_map["load_lithocode_to_Sc_csv"])
+    {   
+      string this_lookup_table_Sc = DATA_DIR+this_string_map["lookup_filename_Sc"];
+      cout << "I am going to load a lookup table for Sc" << endl;
+      cout << "The filename is: " << this_lookup_table_Sc << endl;
+      LSDLC.read_strati_to_Sc_csv(this_lookup_table_Sc);
+    }
+    else
+    {
+      LSDLC.hardcode_fill_strati_to_Sc_map();  
+    }  
+    
+
+    // Now we'll get the lithology codes, convert them to K values and make a raster of K values for the model to use
+    cout << "Getting the lithology codes" << endl;
+    LSDIndexRaster lithocodes_index_raster = LSDLC.get_lithology_codes_from_raster(elev_raster,forbidden_lithocodes);
+    cout << "Converting the litho codes to K values" << endl;
+    LSDRaster K_values = LSDLC.index_to_K(lithocodes_index_raster, 0.000003);
+    cout << "Converting the litho codes to Sc values" << endl;
+    LSDRaster Sc_values = LSDLC.index_to_Sc(lithocodes_index_raster, 0.21);
+        
+    LSDRaster Temp_raster = mod.return_as_raster();
+
+    // Make a raster of uplift values 
+    LSDRaster U_values;
+    ifstream U_file_info_in;
+    U_file_info_in.open(U_header.c_str());
+    // check if the parameter file exists
+    if( not U_file_info_in.fail() )
+    {
+      LSDRaster temp_U_values(U_fname,raster_ext);
+      U_values = temp_U_values;
+    }
+    else
+    {
+      cout << "No variable U raster found. I will make one with a constant value of " << this_float_map["rudimentary_steady_forcing_uplift"] << endl;
+      LSDRasterMaker URaster(Temp_raster);
+      URaster.set_to_constant_value(this_float_map["rudimentary_steady_forcing_uplift"]);
+      U_values = URaster.return_as_raster();
+    }
+    U_file_info_in.close();
+
+
+    LSDRasterInfo RI(K_values);
+    // Get the latitude and longitude
+    cout << "I am reading points from the file: "+ this_string_map["fixed_channel_csv_name"] << endl;
+    LSDSpatialCSVReader source_points_data( RI, (DATA_DIR+this_string_map["fixed_channel_csv_name"]) );
+
+    int n_snaps;
+    if (not this_bool_map["cycle_fluvial_snapping"])
+    {
+      n_snaps = 1;
+    }
+    else
+    {
+      n_snaps = this_int_map["snapping_cycles"];
+    }
+
+    int this_frame = 5000;
+    mod.set_current_frame(this_frame);
+    cout << "Let me do a few snaps. The number of snaps is: " << n_snaps << endl;
+
+
+    LSDRaster lithocodes_raster;
+    LSDRaster critical_slopes;
+    LSDRaster new_muddpile_topo_raster;
+
+    for (int i = 0; i < n_snaps; i++)
+    {
+      // Now the actual snapping!
+      cout << endl << endl << endl << endl;
+      cout << "=================================================" << endl;
+      cout << "The U value at (500,500) is: " << U_values.get_data_element(500,500) << endl;
+
+      cout << "*****************************************" << endl;
+      cout << "This is snap " << i+1 << " of " << n_snaps << endl;
+      cout << "*****************************************" << endl;
+      
+
+
+      // if(i>0)
+      // {
+      cout << "Let me create a raster of the topography from the previous loop." << endl;
+      new_muddpile_topo_raster = mod.return_as_raster();
+      cout << "Now I'll check where in the lithocube we are and make a raster of lithocodes." << endl;
+      lithocodes_index_raster = LSDLC.get_lithology_codes_from_raster(new_muddpile_topo_raster,forbidden_lithocodes);
+      cout << "I am now converting the lithocodes index raster to an LSDRaster" << endl;
+      lithocodes_raster = LSDRaster(lithocodes_index_raster);
+      cout << "Converting the litho codes to K values" << endl;
+      K_values = LSDLC.index_to_K(lithocodes_index_raster, 0.000003);
+      cout << "Converting the litho codes to Sc values" << endl;
+      Sc_values = LSDLC.index_to_Sc(lithocodes_index_raster, 0.21);
+
+      // }
+
+      mod.fluvial_snap_to_steady_variable_K_variable_U(K_values, U_values, source_points_data,this_bool_map["carve_before_fill"]);
+
+      if (this_bool_map["use_initial_topography_as_max_elevation"])
+      {
+        mod.cap_elevations(InitialRaster);
+      }
+
+      // Snap to critical slopes now? 
+      if (i == n_snaps-1)
+      {
+        // first, get the channels for burning
+        LSDSpatialCSVReader chan_data = mod.get_channels_for_burning(this_int_map["threshold_contributing_pixels"]);
+
+        cout << "Last snap! Getting critical slopes and smoothing" << endl;
+        critical_slopes = mod.basic_valley_fill_critical_slope(Sc_values,this_int_map["threshold_contributing_pixels"]);
+
+
+
+        // smooth the critical slope raster
+        int kr = 0;
+        float sigma = this_float_map["smoothing_window_radius"];
+        for (int i = 0; i<this_int_map["smoothing_sweeps"]; i++)
+        {
+          cout << "smooth sweep " << i+1 << " of " << this_int_map["smoothing_sweeps"] << endl;
+          critical_slopes = critical_slopes.GaussianFilter(sigma, kr);
+        }
+
+        // Now impose those channels
+        LSDRasterMaker RM(critical_slopes);
+        RM.impose_channels(chan_data);
+        critical_slopes = RM.return_as_raster();
+
+        if (this_bool_map["use_initial_topography_as_max_elevation"])
+        {
+          mod.cap_elevations(InitialRaster);
+        }
+
+      }
+      
+      // Now print
+      if (i % this_int_map["snap_print_rate"] == 0 || i == n_snaps-1)
+      {
+        cout << "This is snap " << i+1 << " of " << n_snaps << endl;
+
+        if(this_bool_map["print_snapped_to_steady_frame"])
+        {
+          cout << endl << endl << "====================================" << endl;
+          cout << "I am printing the snapped surface, increasing the frame count by 1." << endl;
+          cout << "The frame number is " << this_frame << endl;
+          mod.set_current_frame(this_frame);
+          mod.print_rasters_and_csv( this_frame );
+
+          if (i == n_snaps-1)
+          {
+            cout << "I'm writing the critical slope raster" << endl;
+            string this_raster_name = OUT_DIR+OUT_ID+"_CritSlope";
+            critical_slopes.write_raster(this_raster_name + to_string(this_frame), "bil");  
+
+            cout << "Let me print the hillshade for you. " << endl;
+            float hs_azimuth = 315;
+            float hs_altitude = 45;
+            float hs_z_factor = 1;
+            LSDRaster hs_raster = critical_slopes.hillshade(hs_altitude,hs_azimuth,hs_z_factor);
+            this_raster_name = OUT_DIR+OUT_ID+"_CritSlope_hs";
+            hs_raster.write_raster(this_raster_name + to_string(this_frame), "bil");
+          }
+
+          if(this_bool_map["print_K_raster"])
+          {
+            cout << "Printing a K raster" << endl;
+            K_values.write_raster(K_name + to_string(this_frame), "bil");
+          }
+          if(this_bool_map["print_Sc_raster"])
+          {
+            cout << "Printing a Sc raster" << endl;
+            Sc_values.write_raster(Sc_name + to_string(this_frame), "bil");
+          }
+          if(this_bool_map["print_lithocode_raster"]) //&& i>0
+          {
+            cout << "Printing a lithocode raster" << endl;
+            lithocodes_raster.write_raster(lithocodes_raster_name + to_string(this_frame), "bil");
+          }
+
+        }
+      }
+      this_frame++;
+
+    }
+
+
+    if (this_bool_map["print_final_channel_network"])
+    {
+      LSDRaster ft,ct;
+
+      if(this_bool_map["impose_single_channel_printing"])
+      {
+        // load the single channel
+        LSDRasterInfo RI(InitialRaster);
+        // Get the latitude and longitude
+        //cout << "I am reading points from the file: "+ this_string_map["channel_source_fname"] << endl;
+        LSDSpatialCSVReader source_points_data( RI, (DATA_DIR+this_string_map["fixed_channel_csv_name"]) );
+
+        if(this_bool_map["fixed_channel_dig_and_slope"])
+        {
+          string fd_column_name = this_string_map["single_channel_fd_string"];
+          string elevation_column_name = this_string_map["single_channel_elev_string"];
+
+          source_points_data.data_column_add_float(elevation_column_name, -this_float_map["single_channel_dig"]);
+          source_points_data.enforce_slope(fd_column_name, elevation_column_name, this_float_map["min_slope_for_fill"]); 
+
+          string csv_name = OUT_DIR+"final_single_channel.csv";
+          source_points_data.print_data_to_csv(csv_name);
+          if ( this_bool_map["convert_csv_to_geojson"])
+          {
+            string gjson_name = OUT_DIR+"final_single_channel.geojson";
+            source_points_data.print_data_to_geojson(gjson_name);
+          }   
+        }
+
+        mod.impose_channels(source_points_data);
+      }
+
+      LSDRaster new_muddpile_topo_raster = mod.return_as_raster(); 
+      if(this_bool_map["carve_before_fill"])
+      {
+        ct = new_muddpile_topo_raster.Breaching_Lindsay2016();
+        ft = ct.fill(this_float_map["min_slope_for_fill"]);
+      }
+      else
+      {
+        ft = new_muddpile_topo_raster.fill(this_float_map["min_slope_for_fill"]);
+      }
+
+      // Write the raster
+      string R_name = OUT_DIR+"Final_DEM_fill";
+      ft.write_raster(R_name,"bil");
+      R_name = OUT_DIR+"Final_DEM";
+      new_muddpile_topo_raster.write_raster(R_name,"bil");
+
+      cout << "\t Flow routing..." << endl;
+      LSDFlowInfo FlowInfo(boundary_conditions,ft);
+
+      // calculate the flow accumulation
+      cout << "\t Calculating flow accumulation (in pixels)..." << endl;
+      LSDIndexRaster FlowAcc = FlowInfo.write_NContributingNodes_to_LSDIndexRaster();
+
+      cout << "\t Converting to flow area..." << endl;
+      LSDRaster DrainageArea = FlowInfo.write_DrainageArea_to_LSDRaster();
+
+      // calculate the distance from outlet
+      cout << "\t Calculating flow distance..." << endl;
+      LSDRaster DistanceFromOutlet = FlowInfo.distance_from_outlet();
+
+      cout << "\t Loading Sources..." << endl;
+      cout << "\t Source file is... " << CHeads_file << endl;
+
+      // load the sources
+      vector<int> sources;
+      if (CHeads_file == "NULL" || CHeads_file == "Null" || CHeads_file == "null")
+      {
+        cout << endl << endl << endl << "==================================" << endl;
+        cout << "The channel head file is null. " << endl;
+        cout << "Getting sources from a threshold of "<< this_int_map["threshold_contributing_pixels"] << " pixels." <<endl;
+        sources = FlowInfo.get_sources_index_threshold(FlowAcc, this_int_map["threshold_contributing_pixels"]);
+
+        cout << "The number of sources is: " << sources.size() << endl;
+      }
+      else
+      {
+        cout << "Loading channel heads from the file: " << DATA_DIR+CHeads_file << endl;
+        sources = FlowInfo.Ingest_Channel_Heads((DATA_DIR+CHeads_file), "csv",2);
+        cout << "\t Got sources!" << endl;
+      }
+
+      // now get the junction network
+      LSDJunctionNetwork JunctionNetwork(sources, FlowInfo);
+
+      // get the chi coordinate
+      float A_0 = 1.0;
+      float thresh_area_for_chi = float( this_int_map["threshold_contributing_pixels"] ); // needs to be smaller than threshold channel area
+
+      float movern = this_float_map["m"]/this_float_map["n"];
+      LSDRaster chi_coordinate = FlowInfo.get_upslope_chi_from_all_baselevel_nodes(movern,A_0,thresh_area_for_chi);
+
+      vector<int> BaseLevelJunctions = JunctionNetwork.get_BaseLevelJunctions();
+
+      cout << endl << endl << endl << "=================" << endl;
+      for (int i = 0; i< int(BaseLevelJunctions.size()); i++)
+      {
+        cout << "bl["<<i<<"]: " << BaseLevelJunctions[i] << endl;
+      }
+      cout <<"=================" << endl;
+
+      vector<int> source_nodes;
+      vector<int> outlet_nodes;
+      vector<int> baselevel_node_of_each_basin;
+      int n_nodes_to_visit = 10;
+      JunctionNetwork.get_overlapping_channels_to_downstream_outlets(FlowInfo, BaseLevelJunctions, DistanceFromOutlet,
+                                  source_nodes,outlet_nodes,baselevel_node_of_each_basin,n_nodes_to_visit);
+
+      LSDChiTools ChiTool_chi_checker(FlowInfo);
+      ChiTool_chi_checker.chi_map_automator_chi_only(FlowInfo, source_nodes, outlet_nodes, baselevel_node_of_each_basin,
+                          ft, DistanceFromOutlet,
+                          DrainageArea, chi_coordinate);
+
+      string chi_data_maps_string = OUT_DIR+OUT_ID+"_final_chi_data_map.csv";
+      ChiTool_chi_checker.print_chi_data_map_to_csv(FlowInfo, chi_data_maps_string);
+
+      if ( this_bool_map["convert_csv_to_geojson"])
+      {
+        string gjson_name = OUT_DIR+OUT_ID+"_final_chi_data_map.geojson";
+        LSDSpatialCSVReader thiscsv(chi_data_maps_string);
+        thiscsv.print_data_to_geojson(gjson_name);
+      }  
+    }
+  }
+
+
+  //==============================================================================================
+  //
+  //  /$$$$$$$$                                     /$$                                        
+  // |__  $$__/                                    |__/                                        
+  //    | $$  /$$$$$$  /$$$$$$  /$$$$$$$   /$$$$$$$ /$$  /$$$$$$  /$$$$$$$   /$$$$$$$  /$$$$$$ 
+  //    | $$ /$$__  $$|____  $$| $$__  $$ /$$_____/| $$ /$$__  $$| $$__  $$ /$$_____/ /$$__  $$
+  //    | $$| $$  \__/ /$$$$$$$| $$  \ $$|  $$$$$$ | $$| $$$$$$$$| $$  \ $$| $$      | $$$$$$$$
+  //    | $$| $$      /$$__  $$| $$  | $$ \____  $$| $$| $$_____/| $$  | $$| $$      | $$_____/
+  //    | $$| $$     |  $$$$$$$| $$  | $$ /$$$$$$$/| $$|  $$$$$$$| $$  | $$|  $$$$$$$|  $$$$$$$
+  //    |__/|__/      \_______/|__/  |__/|_______/ |__/ \_______/|__/  |__/ \_______/ \_______/
+  // 
+  //============================================================================================     
   //============================================================================
   // Logic for a rudimentary steady forcing of uplift
   //============================================================================
@@ -1745,8 +2665,6 @@ if(this_bool_map["snap_to_steady_critical_slopes_use_LithoCube"])
     mod.run_components_combined();
 
   }
-
-
 
 
   //============================================================================
