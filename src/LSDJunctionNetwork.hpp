@@ -257,16 +257,16 @@ class LSDJunctionNetwork
 
   /// @brief This is a more complete function for junction angles
   ///  It overwirtes two maps, containing all sorts of information about
-  ///   the junction angles. 
+  ///   the junction angles.
   /// @param JunctionList a list of junctions
   /// @param FlowInfo an LSDFlowInfo object
-  /// @param JA_int_info A map where the key is the junction number 
+  /// @param JA_int_info A map where the key is the junction number
   ///    and the vector is a series of integer data about that juction
-  /// @param JA_float_info A map where the key is the junction number 
+  /// @param JA_float_info A map where the key is the junction number
   ///    and the vector is a series of float data about that juction
   /// @author SMM
   /// @date 17/11/2019
-  void calculate_junction_angles_complete(vector<int> JunctionList, 
+  void calculate_junction_angles_complete(vector<int> JunctionList,
                                           LSDFlowInfo& FlowInfo,
                                           map<int , vector<int> >& JA_int_info,
                                           map<int, vector<float> >& JA_float_info );
@@ -274,23 +274,23 @@ class LSDJunctionNetwork
 
   /// @brief This is a more complete function for junction angles
   ///  It overwirtes two maps, containing all sorts of information about
-  ///   the junction angles. 
+  ///   the junction angles.
   ///  This is an overloaded version that gives some slope and flow distance information
   /// @param JunctionList a list of junctions
   /// @param FlowInfo an LSDFlowInfo object
-  /// @param JA_int_info A map where the key is the junction number 
+  /// @param JA_int_info A map where the key is the junction number
   ///    and the vector is a series of integer data about that juction
-  /// @param JA_float_info A map where the key is the junction number 
+  /// @param JA_float_info A map where the key is the junction number
   ///    and the vector is a series of float data about that juction
   /// @author SMM
   /// @date 17/11/2019
-  void calculate_junction_angles_complete(vector<int> JunctionList, 
+  void calculate_junction_angles_complete(vector<int> JunctionList,
                                           LSDFlowInfo& FlowInfo, LSDRaster& Elevation,
                                           LSDRaster& FlowDistance, float vertical_interval,
                                           map<int , vector<int> >& JA_int_info,
                                           map<int, vector<float> >& JA_float_info );
 
-                                                            
+
   /// @brief This function gets the mean and standard error of every junction angle
   ///   upslope of a given junction
   /// @param target_junction The target junction
@@ -350,7 +350,7 @@ class LSDJunctionNetwork
                                                        string csv_name);
 
   /// @brief This prints the junction angles to a csv file
-  ///  It uses the much more complete junction angle code 
+  ///  It uses the much more complete junction angle code
   /// @param JunctionList The list of junctions to analyze. If this is an empty vector,
   ///  the code analyses all junctions in the DEM
   /// @param FlowInfo The LSDFlowInfo object
@@ -373,7 +373,7 @@ class LSDJunctionNetwork
   /// @author SMM
   /// @date 07/12/2019
   void print_complete_junction_angles_to_csv(vector<int> JunctionList,
-                                             LSDFlowInfo& FlowInfo, LSDRaster& Elevations, 
+                                             LSDFlowInfo& FlowInfo, LSDRaster& Elevations,
                                              LSDRaster& FlowDistance, float vertical_interval,
                                              string csv_name);
 
@@ -444,6 +444,24 @@ class LSDJunctionNetwork
   /// @author SMM
   /// @date 04/03/2020
   void PrintChannelNetworkToCSV_WithElevation(LSDFlowInfo& flowinfo, string fname_prefix,LSDRaster& elevation);
+
+  /// @brief This prints a stream network to a csv in WGS84. It includes the elevation data and the donor junction
+  /// @param FlowInfo the flow info object which translates node indices to actual points
+  /// @param FileName_prefix The prefix of the file to write, if no path is included it will write to the current directory.
+  ///  The csv extension is added automatically.
+  /// @param elevation The elevation raster
+  /// @author SMM
+  /// @date 08/11/2020
+  void PrintChannelNetworkToCSV_WithElevation_WithDonorJunction(LSDFlowInfo& flowinfo, string fname_prefix,LSDRaster& elevation);
+
+  /// @brief This prints a stream network to a csv in WGS84. It includes surface fitting metrics along the channel
+  /// @param FlowInfo the flow info object which translates node indices to actual points
+  /// @param FileName_prefix The prefix of the file to write, if no path is included it will write to the current directory.
+  ///  The csv extension is added automatically.
+  /// @param elevation The elevation raster
+  /// @author FJC
+  /// @date 28/01/2022
+  void PrintChannelNetworkToCSV_WithSurfaceMetrics(LSDFlowInfo& flowinfo, string fname_prefix, LSDRaster& Elevation, LSDRaster& Slope, LSDRaster& Relief, LSDRaster& Curvature);
 
 
   /// @brief This sends the JunctionArray to a LSDIndexRaster.
@@ -559,6 +577,24 @@ class LSDJunctionNetwork
     /// @author SMM
     /// @date 26/06/17
     vector<int>  Prune_Junctions_By_Contributing_Pixel_Window_Remove_Nested_And_Nodata(LSDFlowInfo& FlowInfo,
+                                              LSDRaster& TestRaster, LSDIndexRaster& FlowAcc,
+                                              int lower_limit, int upper_limit);
+
+    /// @brief This function removes basins that fall outside a contributing pixel
+    ///  Window and those that
+    ///  are nested. A rather intensive pruning process that hopeuflly results
+    ///  in a number of basins that are a similar size
+    /// @detail This doesn't just look for baselevel junctions: it goes through
+    ///  all junctions in the DEM. Warning: computationally expensive!
+    /// @param FlowInfo The LSDFlowInfo object
+    /// @param TestRaster A raster that is just used to look for nodata
+    /// @param FlowAcc an LSDIndexRaster with the number of pixels for flow accumulation
+    /// @param lower_limit The minimum number of contributing pixels
+    /// @param upper_limit The maximum number of contributing pixels
+    /// @return a pruned list of base level nodes
+    /// @author SMM
+    /// @date 26/06/17
+    vector<int>  Prune_Junctions_By_Contributing_Pixel_Window_Remove_Nested_Keep_Edge(LSDFlowInfo& FlowInfo,
                                               LSDRaster& TestRaster, LSDIndexRaster& FlowAcc,
                                               int lower_limit, int upper_limit);
 
@@ -1281,7 +1317,30 @@ vector<int> GetChannelHeadsChiMethodFromValleys(vector<int> ValleyNodes,
   /// @date 18/10/2012, 28/03/2013
   LSDRaster ExtractRidges(LSDFlowInfo& FlowInfo, int& min_order, int& max_order);
 
+  /// @brief This extracts all ridges defined by every junction. It takes the penultamate node
+  ///  before the next downstream junction, and then extract that basin. It then gets the outline
+  ///  of that basin for tagging as ridgeline nodes. Therefore every junction, except for baselevel junctions,
+  ///  will have ridgelines.
+  /// @detail Overlapping is based on the stack so higher order junctions will overwrite the ridgelines of
+  ///  lower order junctions.
+  /// @param FlowInfo LSDFlowInfo object.
+  /// @return A map with the key being the node index and the value being the largest stream order of the ridge
+  /// @author SMM
+  /// @date 11/01/2021
+  map<int,int> ExtractAllRidges(LSDFlowInfo& FlowInfo);
 
+  /// @brief This extracts all ridges defined by every junction. It takes the penultamate node
+  ///  before the next downstream junction, and then extract that basin. It then gets the outline
+  ///  of that basin for tagging as ridgeline nodes. Therefore every junction, except for baselevel junctions,
+  ///  will have ridgelines.
+  /// @detail Overlapping is based on the stack so higher order junctions will overwrite the ridgelines of
+  ///  lower order junctions.
+  /// @param FlowInfo LSDFlowInfo object.
+  /// @param csv_name the name of the csv (with extension) to which to print the data
+  /// @return A map with the key being the node index and the value being the largest stream order of the ridge
+  /// @author SMM
+  /// @date 11/01/2021
+  map<int,int> ExtractAllRidges(LSDFlowInfo& FlowInfo, string csv_name);
 
   /// @brief This last function gets the hilltops: ridges limited by a maximum slope.
   ///
@@ -1309,7 +1368,7 @@ vector<int> GetChannelHeadsChiMethodFromValleys(vector<int> ValleyNodes,
   /// @date 04/04/13
   LSDIndexRaster ChannelIndexer(LSDFlowInfo& flowinfo);
 
-  /// @brief This extracts vectors containing node incidex, junction indices
+  /// @brief This extracts vectors containing node indices, junction indices
   ///  and stream orders of pixels in the channel network.
   /// @detail The vectors are replaced by the method
   /// @author SMM
@@ -1482,6 +1541,53 @@ vector<int> GetChannelHeadsChiMethodFromValleys(vector<int> ValleyNodes,
   /// @date 21/10/2013
   int get_nodeindex_of_nearest_channel_for_specified_coordinates(float X_coordinate,float Y_coordinate, int threshold_stream_order, int search_radius_nodes,LSDFlowInfo& FlowInfo);
 
+  /// @brief Function to get the nodeindex of the nearest channel node for a given nodeindex
+  /// @param starting_nodeindex does what it says on the tin
+  /// @param threshold_stream_order The minimum stream order that will be considers a 'channel' by the algorithm
+  /// @param FlowInfo LSDFlowInfo object.
+  /// @return Returns the NodeIndex of the nearest channel node.
+  /// @author SMM
+  /// @date 02/07/2021
+  int get_nodeindex_of_nearest_channel(int starting_nodeindex, int threshold_stream_order, LSDFlowInfo& FlowInfo);
+
+  /// @brief Function to get the distance to the nearest channel
+  /// @param starting_nodeindex does what it says on the tin
+  /// @param threshold_stream_order The minimum stream order that will be considers a 'channel' by the algorithm
+  /// @param FlowInfo LSDFlowInfo object.
+  /// @param FlowDist the distance from outlet raster
+  /// @return Returns the distance to the nearest channel node following a flow path
+  /// @author SMM
+  /// @date 02/07/2021
+  float get_distance_to_nearest_channel(int starting_nodeindex, int threshold_stream_order, LSDFlowInfo& FlowInfo, LSDRaster& FlowDist);
+
+  /// @brief Function to get the distance to the nearest channel
+  /// @param threshold_stream_order The minimum stream order that will be considers a 'channel' by the algorithm
+  /// @param FlowInfo LSDFlowInfo object.
+  /// @param FlowDist the flow distance raster
+  /// @return Returns the distance of all pixels to the nearest channel node as a raster
+  /// @author SMM
+  /// @date 02/07/2021
+  LSDRaster get_distance_to_nearest_channel_raster(int threshold_stream_order, LSDFlowInfo& FlowInfo, LSDRaster& FlowDist);
+
+  /// @brief Function to get the releif to the nearest channel
+  /// @param starting_nodeindex does what it says on the tin
+  /// @param threshold_stream_order The minimum stream order that will be considers a 'channel' by the algorithm
+  /// @param FlowInfo LSDFlowInfo object.
+  /// @param Elevation the elevation raster
+  /// @return Returns the relief of this pixel to the nearest channel node following a flow path
+  /// @author SMM
+  /// @date 02/07/2021
+  float get_relief_to_nearest_channel(int starting_nodeindex, int threshold_stream_order, LSDFlowInfo& FlowInfo, LSDRaster& Elevation);
+
+  /// @brief Function to get the distance to the nearest channel
+  /// @param threshold_stream_order The minimum stream order that will be considers a 'channel' by the algorithm
+  /// @param FlowInfo LSDFlowInfo object.
+  /// @param Elevation the elevation raster
+  /// @return Returns the relief of this pixel to the nearest channel node as a raster
+  /// @author SMM
+  /// @date 02/07/2021
+  LSDRaster get_relief_to_nearest_channel_raster(int threshold_stream_order, LSDFlowInfo& FlowInfo, LSDRaster& Elevation);
+
   /// @brief Function to snap input coordinates to the nearest channel node from latitude and longitude
   /// @param latitude
   /// @param longitude
@@ -1624,8 +1730,8 @@ vector<int> GetChannelHeadsChiMethodFromValleys(vector<int> ValleyNodes,
 
   /// @brief This function takes the name of a csv file that contains
   ///  latitude and longitude information and then finds the junction
-  ///  numbers upslope. 
-  /// @param csv_filename The name of the file from which the lat-long will be read. 
+  ///  numbers upslope.
+  /// @param csv_filename The name of the file from which the lat-long will be read.
   /// @param search_radius_nodes the number of nodes around the point to search
   ///  for a channel
   /// @param threshold_stream_order the minimum stream order to which the point
@@ -1652,7 +1758,7 @@ vector<int> GetChannelHeadsChiMethodFromValleys(vector<int> ValleyNodes,
   ///@author B.G.
   ///@date 09/12/2019
   void select_basin_from_nodes(vector<int>& input_nodes, vector<int>& sources, vector<int>& baselevel_nodes,
-    vector<int>& baselevel_junctions,vector<int>& outlet_nodes,LSDFlowInfo& FlowInfo, 
+    vector<int>& baselevel_junctions,vector<int>& outlet_nodes,LSDFlowInfo& FlowInfo,
     LSDRaster& DistanceFromOutlet, bool check_edges);
 
   ///@brief This function extract basins from list of nodes and overwrite given sources,
@@ -1670,7 +1776,7 @@ vector<int> GetChannelHeadsChiMethodFromValleys(vector<int> ValleyNodes,
   ///@param  LSDRaster: DistanceFromOutlet, a raster with the distance from oulet
   ///@author B.G.
   ///@date 09/12/2019
-  void basin_from_node_snap_to_largest_surrounding_DA(vector<int>& input_nodes, vector<int>& sources, vector<int>& baselevel_nodes, 
+  void basin_from_node_snap_to_largest_surrounding_DA(vector<int>& input_nodes, vector<int>& sources, vector<int>& baselevel_nodes,
   vector<int>& baselevel_junctions,vector<int>& outlet_nodes, LSDFlowInfo& FlowInfo, LSDRaster& DistanceFromOutlet, LSDRaster& DrainageArea,
   int n_pixels, bool check_edges);
 
@@ -1687,7 +1793,7 @@ vector<int> GetChannelHeadsChiMethodFromValleys(vector<int> ValleyNodes,
   ///@return a vector with the selected baselevel nodes
   ///@author B.G
   ///@date December 2019
-  vector<int> basin_from_node_minimum_DA(vector<int>& sources, vector<int>& baselevel_nodes, 
+  vector<int> basin_from_node_minimum_DA(vector<int>& sources, vector<int>& baselevel_nodes,
   vector<int>& baselevel_junctions,vector<int>& outlet_nodes, LSDFlowInfo& FlowInfo, LSDRaster& DistanceFromOutlet, LSDRaster& DrainageArea,
   double min_DA, bool check_edges);
 
@@ -1705,7 +1811,7 @@ vector<int> GetChannelHeadsChiMethodFromValleys(vector<int> ValleyNodes,
   ///@return a vector with the selected baselevel nodes
   ///@author B.G
   ///@date December 2019
-  std::vector<int> basin_from_node_minimum_DA_draining_to_list_of_nodes(vector<int>& input_nodes, vector<int>& sources, vector<int>& baselevel_nodes, 
+  std::vector<int> basin_from_node_minimum_DA_draining_to_list_of_nodes(vector<int>& input_nodes, vector<int>& sources, vector<int>& baselevel_nodes,
   vector<int>& baselevel_junctions,vector<int>& outlet_nodes, LSDFlowInfo& FlowInfo, LSDRaster& DistanceFromOutlet, LSDRaster& DrainageArea,
   double min_DA);
 
@@ -1723,7 +1829,7 @@ vector<int> GetChannelHeadsChiMethodFromValleys(vector<int> ValleyNodes,
   ///@return a vector with the selected baselevel nodes
   ///@author B.G
   ///@date December 2019
-  std::vector<int> basin_from_node_all_minimum_DA_for_one_watershed(int outlet_node_of_the_watershed, vector<int>& sources, vector<int>& baselevel_nodes, 
+  std::vector<int> basin_from_node_all_minimum_DA_for_one_watershed(int outlet_node_of_the_watershed, vector<int>& sources, vector<int>& baselevel_nodes,
 vector<int>& baselevel_junctions,vector<int>& outlet_nodes, LSDFlowInfo& FlowInfo, LSDRaster& DistanceFromOutlet, LSDRaster& DrainageArea,
 double min_DA, double max_DA);
 
@@ -1842,6 +1948,14 @@ double min_DA, double max_DA);
   /// @author FJC
   /// @date 08/10/15
   int get_downstream_junction(int starting_junction, LSDFlowInfo& FlowInfo);
+
+  /// @details Get downstream junction for a specified node
+  /// @param CurrentNode starting node
+  /// @param FlowInfo LSDFlowInfo object
+  /// @return integer with downstream junction number
+  /// @author FJC
+  /// @date 29/01/21
+  int get_junction_downstream_of_node(int CurrentNode, LSDFlowInfo& FlowInfo);
 
   /// @details Gets the stream order of a node
   /// @param FlowInfo LSDFlowInfo object
@@ -2115,6 +2229,19 @@ void write_river_profiles_to_csv_all_sources(float channel_length, int slope_win
 /// @date 12/11/2018
 //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=--=-=-=-=-=-=-=-=-=-=-=-=
 map<int,bool> GetMapOfChannelNodes(LSDFlowInfo& flowinfo);
+
+/// @brief Calculate the hypsometric integral for every point in the channel network and write to csv
+/// @param fname_prefix csv filename prefix
+/// @param FlowInfo
+/// @param Elevation elev raster
+/// @author FJC
+/// @date 26/01/22
+//=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=--=-=-=-=-=-=-=-=-=-=-=-=
+void calculate_hypsometric_integral(string fname_prefix, LSDFlowInfo& FlowInfo, LSDRaster& Elevation);
+
+void calculate_upstream_elevations_network(string fname_prefix, LSDFlowInfo& FlowInfo, LSDRaster& Elevation, float bin_width, float lower_limit, float upper_limit);
+
+
 
   protected:
 

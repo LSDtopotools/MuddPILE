@@ -199,7 +199,7 @@ class LSDFlowInfo
   ///  Note: this is a double, because a float does not have sufficient precision
   ///  relative to a UTM location (which is in metres)
   /// @param long the longitude of the node (in decimal degrees, replaced by function)
-  ///  Note: this is a double, because a float does not have sufficient precision 
+  ///  Note: this is a double, because a float does not have sufficient precision
   /// @param X the Easting of the location
   /// @param Y the Northing of the location
   /// @author SMM
@@ -312,7 +312,7 @@ class LSDFlowInfo
   /// @param drainage_area
   /// @author SMM
   /// @date 30/09/19
-  void print_vector_of_nodeindices_to_csv_file_with_latlong(vector<int> node_list,string path, string filename, LSDRaster& Elevation, LSDRaster& FlowDistance, 
+  void print_vector_of_nodeindices_to_csv_file_with_latlong(vector<int> node_list,string path, string filename, LSDRaster& Elevation, LSDRaster& FlowDistance,
                                                             LSDRaster& drainage_area);
 
   ///@brief This function takes a vector of node indices and prints a csv
@@ -324,6 +324,20 @@ class LSDFlowInfo
   ///@author SWDG after SMM
   ///@date 2/2/16
   void print_vector_of_nodeindices_to_csv_file_Unique(vector<int>& nodeindex_vec, string outfilename);
+
+  ///@brief This function takes a vector of node indices and moves
+  ///  down the list, getting the bearings of each segment subject to an offset
+  ///@param nodeindex vec is a vector of nodeindices (which are ints)
+  ///@param node_spacing how many nodes between the two nodevecs
+  ///@param print_bearings if true, prints to a geojson
+  ///@param outfileprefix the prefix of the outfile (.geojson gets added)
+  ///@param bearing_nodes The list of nodes from which the bearing is taken
+  ///@param bearings the actual bearings
+  ///@author SMM
+  ///@date 4/3/21
+  void calculate_bearings_from_nodelist(vector<int> nodeindex_vec, int node_spacing,
+                                                 bool print_bearings, string outfileprefix,
+                                                 vector<int>& bearing_nodes, vector<float>& bearing_vec);
 
 
   ///@brief Get the number of pixels flowing into a node.
@@ -409,6 +423,8 @@ class LSDFlowInfo
   int get_NDataNodes () const          { return NDataNodes; }
   /// @return Vector of all base level nodes.
   vector<int> get_BaseLevelNodeList () { return BaseLevelNodeList; }
+  /// @return get the number of baselevel nodes
+  int get_NBaseLevelNodes () { return int( BaseLevelNodeList.size() );}
 
   /// @return donor stack vector (depth first search sequence of nodes)
   vector <int> get_donorStack() const { return DonorStackVector; }
@@ -543,8 +559,8 @@ class LSDFlowInfo
   /// @details Assumes the FlowInfo object has the same dimensions as the channel heads raster.
   /// @param filename of the channel heads raster.
   /// @param extension of the channel heads raster.
-  /// @param (optional) input_switch, ONLY NEEDED FOR LOADING .csv FILES! 
-  ///  An integer to determine whether to use the node index (0 -> default), row and column indices (1), 
+  /// @param (optional) input_switch, ONLY NEEDED FOR LOADING .csv FILES!
+  ///  An integer to determine whether to use the node index (0 -> default), row and column indices (1),
   ///  or point coordinates from .csv file (2) to locate the channel heads
   /// @return Vector of source nodes.
   /// @author SWDG updated SMM updated DTM
@@ -561,7 +577,7 @@ class LSDFlowInfo
   /// @details Assumes the FlowInfo object has the same dimensions as the channel heads raster.
   /// @param filename of the channel heads raster.
   /// @param extension of the channel heads raster.
-  /// @param (optional) input_switch, ONLY NEEDED FOR LOADING .csv FILES! 
+  /// @param (optional) input_switch, ONLY NEEDED FOR LOADING .csv FILES!
   ///   An integer to determine whether to use the node index (0 -> default),
   ///   row and column indices (1), or point coordinates from .csv file (2) to locate the channel heads
   /// @return Vector of source nodes.
@@ -582,7 +598,7 @@ class LSDFlowInfo
   // Using xy allows a "universal" method that can ingest external or internal data
   // B.G. 11/11/2018
   //=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
-  vector<int> Ingest_Channel_Heads(vector<float>& x_coord, vector<float>& y_coord);          
+  vector<int> Ingest_Channel_Heads(vector<float>& x_coord, vector<float>& y_coord);
 
   // functions for getting flow, discharge, sediment flux, etc
 
@@ -624,7 +640,7 @@ class LSDFlowInfo
   /// @brief This creates a new raster. It takes a node list (usually a channel) and then
   ///  looks at all the donors to that channel and sees if any are influenced upslope
   ///  by nodata. It then removes all these pixels. This way you can isolate both
-  ///  nodes drainaing to a local base level but eliminate nodes draining from the edge. 
+  ///  nodes drainaing to a local base level but eliminate nodes draining from the edge.
   /// @detail uses D8 flow routing to do this
   /// @param topography A topography raster (must be same dimension as that used to make flowinfo)
   /// @param node_list a list of nodes (often read by an LSDSpatialCSVReader object)
@@ -697,9 +713,19 @@ class LSDFlowInfo
   ///@date 19/11/2019
   LSDRaster upslope_variable_accumulator_v3(LSDRaster& accum_raster);
 
+  ///@brief This function returns the upslope average value of 
+  /// some raster bassed on the flow info
+  ///@detail Uses the stack vector to get the accumulation
+  ///@param A raster that contains the variable to be averaged (e.g., precipitation)
+  ///@return A raster containing the uplsope average
+  ///@author SMM
+  ///@date 25/06/2021
+  LSDRaster upslope_average(LSDRaster& accum_raster);
+
+
   ///@brief This function tests whether one node is upstream of another node
   ///@param current_node
-  ///@param test_node
+  ///@param test_node The node which we want to test whether it is upstream or not
   ///@return Boolean indicating whether node is upstream or not
   ///@author FC
   ///@date 08/10/13
@@ -1043,11 +1069,22 @@ void get_nodeindices_from_csv(string csv_filename, vector<int>& NIs, vector<floa
   /// @details This version uses lat-long
   /// @param latitude The latitude of the source.
   /// @param longitude The longitude of the source
-  /// @return A vector of nodeindices that contain the nodes from start to finish that are 
+  /// @return A vector of nodeindices that contain the nodes from start to finish that are
   ///  on the flow path
   /// @author SMM
   /// @date 30/09/2019
-  vector<int> get_flow_path(float latitude, float longitude);                   
+  vector<int> get_flow_path(float latitude, float longitude);
+
+
+  /// @brief Perform a downslope trace using D8 from a given point source.
+  /// @details This version uses a nodeindex
+  /// @param ni the nodeindex of the starting point
+  /// @return A vector of nodeindices that contain the nodes from start to finish that are
+  ///  on the flow path
+  /// @author SMM
+  /// @date 12/03/2021
+  vector<int> get_flow_path(int ni);
+
 
   /// @brief Move the location of the channel head downslope by a user defined distance.
   /// @param Sources a vector of node indexes of the channel heads to be moved.
@@ -1069,6 +1106,74 @@ void get_nodeindices_from_csv(string csv_filename, vector<int>& NIs, vector<floa
   void MoveChannelHeadUp(vector<int> Sources, float MoveDist, LSDRaster DEM, vector<int>& UpslopeSources, vector<int>& FinalHeads);
 
   void HilltopFlowRoutingOriginal(LSDRaster Elevation, LSDRaster Hilltops, LSDRaster Slope, LSDRaster Aspect, LSDIndexRaster StreamNetwork);
+
+
+
+
+  /// @brief Hilltop flow routing.
+  ///
+  /// @details Hilltop flow routing code built around original code from Martin Hurst. Based on
+  /// Lea (1992), with improvements discussed by Tarboton (1997) and a solution to the
+  /// problem of looping flow paths implemented.
+  ///
+  /// This is the **REFACTORED** version!! It is still slow but hopefully not as slow as before.
+  ///
+  /// The algorithm now checks for local uphill flows and in the case of identifying one,
+  /// D8 flow path is used to push the flow into the centre of the steepest downslope
+  /// cell, at which point the trace is restarted. The same technique is used to cope
+  /// with self intersections of the flow path. These problems are not solved in the
+  /// original paper and I think they are caused at least in part by the high resolution
+  /// topogrpahy we are using.
+  ///
+  /// The code is also now built to take a d infinity flow direction raster instead of an
+  /// aspect raster. See Tarboton (1997) for discussions on why this is the best solution.
+  ///
+  /// The Basins input raster is used to code each hilltop into a basin to allow basin
+  /// averaging to take place.
+  ///
+  /// The final 5 parameters are used to set up printing flow paths to files for visualisation,
+  /// if this is not needed simply pass in false to the two boolean switches and empty variables for the
+  /// others, and the code will run as normal.
+  ///
+  /// The structure of the returned vector< Array2D<float> > is as follows: \n\n
+  /// [0] Hilltop Network coded with stream ID \n
+  /// [1] Hillslope Lengths \n
+  /// [2] Slope \n
+  /// [3] Relief \n
+  ///
+  /// @param Elevation LSDRaster of elevation values.
+  /// @param Slope LSDRaster of slope values.
+  /// @param Hilltops LSDRaster of hilltops.
+  /// @param StreamNetwork LSDIndexRaster of the stream network.
+  /// @param Aspect LSDRaster of Aspect.
+  /// @param Prefix String Prefix for output data filename.
+  /// @param Basins LSDIndexRaster of basin outlines.
+  /// @param PlanCurvature LSDRaster of planform curvature.
+  /// @param print_paths_switch If true paths will be printed.
+  /// @param thinning Thinning factor, value used to skip hilltops being printed, use 1 to print every hilltop.
+  /// @param trace_path The file path to be used to write the path files to, must end with a slash.
+  /// @param basin_filter_switch If this switch is true only basins in Target_Basin_Vector will have their paths printed.
+  /// @param Target_Basin_Vector Vector of Basin IDs that the user wants to print traces for.
+  /// @return Vector of Array2D<float> containing hillslope metrics.
+  /// @author SWDG, SMM
+  /// @date 12/2/14, 20/10/2021
+  vector< Array2D<float> > HilltopFlowRouting_Refactored(LSDRaster& Elevation, LSDRaster& Hilltop_ID, LSDRaster& Slope,
+               LSDRaster& Aspect, LSDRaster& HilltopCurv, LSDRaster& PlanCurvature, LSDIndexRaster& StreamNetwork, LSDIndexRaster& Basins,
+               string Prefix, bool print_paths_switch, int thinning, string trace_path, bool basin_filter_switch,
+               vector<int> Target_Basin_Vector);
+
+
+
+
+  /// @ brief a refactored HFR routine that is much more memory efficient
+  void HilltopFlowRouting_TerrifyingRefactored(LSDRaster& Elevation, LSDRaster& Aspect, LSDRaster& PlanCurvature,
+                                                LSDIndexRaster& StreamNetwork,
+                                                string ridges_csv_name,string Prefix,
+                                                bool print_paths_switch, int thinning, string trace_path, bool basin_filter_switch);
+
+
+
+
 
   /// @brief Hilltop flow routing.
   ///
@@ -1270,6 +1375,36 @@ void get_nodeindices_from_csv(string csv_filename, vector<int>& NIs, vector<floa
   /// @date 25/04/2017
   vector<int> basin_edge_extractor(int outlet_node, LSDRaster& Topography);
 
+  /// @brief This function takes an integer raster that has some tags
+  ///  and then tags all upstream nodes with that tag
+  ///  designed to help extract the main drainage divide of landscapes
+  /// @param tagged_raster an LSDIndexRaster containing the pixels from which we search upstream
+  /// @return An index raster that has all pixels upslope of the tagged regions taking the tagged value
+  /// @author SMM
+  /// @date 11/11/2020
+  LSDIndexRaster tag_nodes_upstream_of_baselevel(LSDIndexRaster& tagged_raster);
+
+  /// @brief This function takes an integer raster that has some tags
+  ///  and then tags all upstream nodes with that tag
+  ///  designed to help extract the main drainage divide of landscapes
+  /// @param tagged_raster an LSDIndexRaster containing the pixels from which we search upstream
+  /// @param crit_downslope_distance The distance beyond which we don't tag the raster.
+  /// @return An index raster that has all pixels upslope of the tagged regions taking the tagged value
+  /// @author SMM
+  /// @date 11/11/2020
+  LSDIndexRaster tag_upstream_nodes(LSDIndexRaster& tagged_raster, float crit_downslope_distance);
+
+
+  /// @brief This function takes an integer raster that has some tags
+  ///  and then tags all downstream nodes with that tag. It stops when you have got too far downstream
+  /// @param tagged_raster an LSDIndexRaster containing the pixels from which we search upstream
+  /// @param crit_downslope_distance The distance beyond which we don't tag the raster.
+  /// @return An index raster that has all pixels downstream of the tagged regions taking the tagged value
+  ///   within a flow distance window
+  /// @author SMM
+  /// @date 11/12/2020
+  LSDIndexRaster tag_downstream_nodes(LSDIndexRaster& tagged_raster, float crit_downslope_distance);
+
 
   /// @brief This function returns all the values from a raster for a corresponding
   /// input vector of node indices.
@@ -1377,29 +1512,60 @@ void get_nodeindices_from_csv(string csv_filename, vector<int>& NIs, vector<floa
   vector<vector<int> > get_vectors_of_flow(LSDRaster& topo);
 
   /// Accessor for the DonorStackVector()
-  vector<int> get_DonorStackVector() {return DonorStackVector;}  
+  vector<int> get_DonorStackVector() {return DonorStackVector;}
   /// Accessor for the DonorStackVector()
-  vector<int> get_RowIndex() {return RowIndex;}  
+  vector<int> get_RowIndex() {return RowIndex;}
   /// Accessor for the DonorStackVector()
-  vector<int> get_ColIndex() {return ColIndex;}  
+  vector<int> get_ColIndex() {return ColIndex;}
 
 
-  /// @brief This is a function that produces a **HUGE** data map, but 
+  /// @brief This is a function that produces a **HUGE** data map, but
   ///  speeds up a number of computations (i.e., memory unfriendly, but computation speed friendly)
   ///  It produces a map that has vectors of vecors where each vector is a baselevel node
   ///  and the map strings are the various data elements such as stack order, inverted stack order, rows, columns, etc
-  /// @return A map of vecvecs where the key is the name of the data member and the vector into the vectors is indexed by the baselevel node. 
+  /// @return A map of vecvecs where the key is the name of the data member and the vector into the vectors is indexed by the baselevel node.
   /// @author BG
   /// @date 01/04/2019
   map<string, vector< vector<int> > > get_map_of_vectors();
 
 
-  ///@brief This return an LSDRaster draining to a specific node, this only fill it with the node ctually in the basin
-  ///@brief And fill the rest with nodata. To be used with test_edge deactivated
-  ///@param int node, the node index of the outlet
-  ///@param LSDRaster the base elevation raster
-  ///@return a LSDRater trimmed to the closest extents
+  /// @brief This return an LSDRaster draining to a specific node, this only fill it with the node ctually in the basin
+  /// @brief And fill the rest with nodata. To be used with test_edge deactivated
+  /// @param int node, the node index of the outlet
+  /// @param LSDRaster the base elevation raster
+  /// @return a LSDRater trimmed to the closest extents
   LSDRaster get_raster_draining_to_node(int node, LSDRaster& elevation_raster);
+
+  /// @brief This takes a node list and returns true if the node is surrounded by
+  ///  other nodes in the node list.
+  /// @param node_list, a vector of nodes. This will almost always be a basin derived from get_upslope_nodes
+  /// @return a vector of bools. True if an internal node
+  /// @author SMM
+  /// @date 11/01/2021
+  vector<bool> internal_nodes(vector<int> node_list);
+
+  /// @brief This takes a node and a vector of nodes and finds the nearest node in the vector to the target node.
+  /// @author FJC
+  /// @date 04/06/21
+  int find_nearest_node_in_vector(int target_node, vector<int> node_vector);
+
+  /// @brief function to calculate the hypsometric integral for a node
+  /// @param node starting node to calculate HI for
+  /// @param FlowInfo
+  /// @param Elevation elev raster
+  /// @author FJC
+  /// @date 26/01/22
+  float calculate_upstream_HI(int node, LSDRaster& Elevation);
+
+  void calculate_upstream_elevations(int node, LSDRaster& Elevation, float bin_width, float lower_limit, float upper_limit, vector<float>& Midpoints, vector<float>& ProbabilityDensity);
+
+
+  /// @brief Find the elevation difference between the channel and surrounding pixels using the
+  /// swath tool.
+  /// @return raster of channel relief.
+  /// @author FJC
+  /// @date 09/03/2021
+  // LSDRaster calculate_channel_relief(vector <LSDRaster>& swath_rasters, LSDRaster& topography_raster, vector<int> channel_node_list);
 
 
   protected:

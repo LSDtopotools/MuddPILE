@@ -97,6 +97,16 @@ class LSDRasterMaker: public LSDRaster
     /// @date 01/09/2017
     void resize_and_reset( int new_rows, int new_cols, float new_resolution, float new_value );
 
+    /// @brief Gets the row and column of a point in the raster
+    /// @param X_coordinate the x location of the point
+    /// @param Y_coordinate the y location of the point
+    /// @param row the row of the point, replaced upon running the routine
+    /// @param col the col of the point, replaced upon running the routine
+    /// @author SMM
+    /// @date 22/01/2016
+    void get_row_and_col_of_a_point(float X_coordinate,float Y_coordinate,int& row, int& col);
+    void get_row_and_col_of_a_point(double X_coordinate,double Y_coordinate,int& row, int& col);
+
     /// @brief Gets the minimum and maximum values from a raster
     /// @return vector with the first element is the minimum and second is the maximum
     /// @author SMM
@@ -109,6 +119,21 @@ class LSDRasterMaker: public LSDRaster
     /// @date 18/11/2018
     void set_to_constant_value(float new_value);
 
+    /// @brief This just adds elevation to any non nodata pixel
+    /// @param value_to_add The value to add. To subtract, this will be negative. 
+    /// @author SMM
+    /// @date 09/02/2021
+    void add_value(float value_to_add);
+
+    /// @brief Adds a strip of values to the raster
+    /// @param start_row_or_col the starting row or column
+    /// @param end_row_or_col the ending row or column
+    /// @param use_rows if true this creates horizontal strips
+    /// @param value the new value of the strip
+    /// @author SMM
+    /// @date 11/11/2020
+    void add_strip(int start_row_or_col, int end_row_or_col, bool horizontal, float value);
+
     /// @brief This linearly scales the raster to new minimum and maximum values
     /// @param new_minimum does what it says on the tin.
     /// @param new_maxuimum does what it says on the tin
@@ -119,10 +144,45 @@ class LSDRasterMaker: public LSDRaster
     /// @brief This fixes a channel, derived from source points data
     ///  onto the model DEM
     /// @param source_points_data an LSDSpatialCSVReader object. It needs lat and long and elevation columns
+    /// @param column_name the name of the elevation column
     /// @author SMM
     /// @date 04/03/2020
-    void impose_channels(LSDSpatialCSVReader& source_points_data);
+    void impose_channels(LSDSpatialCSVReader& source_points_data, string column_name);
 
+    /// @brief This fixes a channel, derived from source points data. It also makes sure none of these nodes is 
+    ///   adjacent to a nodata pixel
+    /// @param source_points_data an LSDSpatialCSVReader object. It needs lat and long and elevation columns
+    /// @param slope the slope between the data point and the adjacent pixel
+    /// @param column_name the name of the elevation column
+    /// @author SMM
+    /// @date 21/11/2020
+    void impose_channels_with_buffer(LSDSpatialCSVReader& source_points_data, float slope, string column_name);
+
+    /// @brief This fixes a channel, derived from source points data. It also makes sure none of these nodes is 
+    ///   adjacent to a nodata pixel. Same as the above function, but uses XY data instead of lat-long
+    /// @param source_points_data an LSDSpatialCSVReader object. It needs XY and elevation columns
+    /// @param slope the slope between the data point and the adjacent pixel
+    /// @param column_name the name of the elevation column
+    /// @author ELSG
+    /// @date 23/02/2021
+    void impose_channels_with_buffer_use_XY(LSDSpatialCSVReader& source_points_data, float slope, string column_name);
+
+    /// @brief This function adds elevation to the nodata pixels around the edge of a DEM
+    ///  It is used to crinkle up the edge of of a raster to ensure drainage 
+    /// @param slope the slope between the data point and the adjacent pixel
+    /// @param source_points_data this gives a channel that defines the outlet
+    /// @author SMM
+    /// @date 19/03/2021
+    void buffer_basin_to_single_outlet(LSDSpatialCSVReader& source_points_data, float slope);
+
+
+    /// @brief This function adds elevation to the nodata pixels around the edge of a DEM
+    ///  it is used on a DEM derived from a basin to ensure internal drainage to 
+    ///  a single outlet
+    /// @param slope the slope between the data point and the adjacent pixel
+    /// @author SMM
+    /// @date 10/02/2020
+    void buffer_basin_to_single_outlet(float slope);
 
     /// @brief This smooths the raster. At some point in the future I'll
     ///  add more options but at the moment it just uses 4 neighbours and has
@@ -133,6 +193,12 @@ class LSDRasterMaker: public LSDRaster
     /// @date 03/09/2017
     void smooth(int boundary_type);
 
+    /// @brief Caps elevations using the initial raster
+    ///  WARNING no testing if the raster is the correct shape!
+    /// @param InitialRaster The initial raster above which the new surface cannot rise.
+    /// @author SMM
+    /// @date 31/08/2020
+    void cap_elevations(LSDRaster& InitialRaster);
 
     //void random_horizontal_strips(int minimum_strip_size, int maximum_strip_size, float minimum_value, float maximum_value);
 
